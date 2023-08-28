@@ -22,13 +22,17 @@ import Point2d exposing (Point2d)
 import Point3d exposing (Point3d)
 import Polygon2d exposing (Polygon2d)
 import Quantity
+import Random
 import Rectangle2d
 import Rectangle3d
 import Scene3d
 import Scene3d.Material
 import Scene3d.Mesh
 import SketchPlane3d
+import Sphere3d
+import Time
 import Util.Function
+import Util.Random
 import Viewpoint3d
 
 
@@ -45,11 +49,19 @@ main =
 type alias Model =
     { ship : Ship
     , lasers : List Laser
+    , enemies : List Enemy
+    , nextEnemySpawn : Float
+    , seed : Random.Seed
     }
 
 
 type alias Laser =
     Point3d Meters WorldCoordinates
+
+
+type alias Enemy =
+    { location : Point3d Meters WorldCoordinates
+    }
 
 
 type alias Ship =
@@ -131,6 +143,9 @@ init : () -> ( Model, Cmd Msg )
 init _ =
     ( { ship = initialShip
       , lasers = []
+      , enemies = []
+      , nextEnemySpawn = enemySpawnRate
+      , seed = Random.initialSeed 0
       }
     , Cmd.none
     )
@@ -180,6 +195,8 @@ update msg model =
     case msg of
         Tick deltaMs ->
             ( model
+                |> moveEnemies deltaMs
+                |> spawnEnemy deltaMs
                 |> moveShip deltaMs
                 |> moveLasers deltaMs
             , Cmd.none
@@ -228,6 +245,76 @@ update msg model =
                     }
             , Cmd.none
             )
+
+
+enemySpawnRate =
+    2000
+
+
+spawnEnemy : Float -> Model -> Model
+spawnEnemy deltaMs model =
+    let
+        nextEnemySpawn =
+            model.nextEnemySpawn - deltaMs
+    in
+    if nextEnemySpawn <= 0 then
+        let
+            ( spawnPoint, seed ) =
+                Random.step
+                    (octagon
+                        |> Polygon2d.edges
+                        |> List.map
+                            (LineSegment3d.on
+                                (SketchPlane3d.xz
+                                    |> SketchPlane3d.translateIn Direction3d.positiveY (Length.meters 30)
+                                )
+                                >> LineSegment3d.midpoint
+                            )
+                        |> Util.Random.fromList
+                        |> Random.map (Maybe.withDefault Point3d.origin)
+                    )
+                    model.seed
+        in
+        { model
+            | nextEnemySpawn = nextEnemySpawn + enemySpawnRate
+            , enemies =
+                { location =
+                    spawnPoint
+                        |> Point3d.translateIn Direction3d.positiveY (Length.meters 30)
+                }
+                    :: model.enemies
+            , seed = seed
+        }
+
+    else
+        { model
+            | nextEnemySpawn = nextEnemySpawn
+        }
+
+
+moveEnemies : Float -> Model -> Model
+moveEnemies deltaMs model =
+    { model
+        | enemies =
+            List.filterMap (moveEnemy deltaMs) model.enemies
+    }
+
+
+moveEnemy : Float -> Enemy -> Maybe Enemy
+moveEnemy deltaMs enemy =
+    let
+        newLocation =
+            enemy.location
+                |> Point3d.translateIn Direction3d.negativeY (Length.meters (deltaMs * 0.01))
+    in
+    if Point3d.yCoordinate newLocation |> Quantity.lessThan (Length.meters -10) then
+        Nothing
+
+    else
+        Just
+            { enemy
+                | location = newLocation
+            }
 
 
 shootLaser : Model -> Model
@@ -422,6 +509,9 @@ view model =
                 , model.lasers
                     |> List.map viewLaser
                     |> Scene3d.group
+                , model.enemies
+                    |> List.map viewEnemy
+                    |> Scene3d.group
                 ]
             }
         ]
@@ -475,3 +565,10 @@ viewLaser point =
         , length = Length.meters 1
         }
         |> Scene3d.cylinder (Scene3d.Material.matte Color.blue)
+
+
+viewEnemy : Enemy -> Scene3d.Entity WorldCoordinates
+viewEnemy enemy =
+    Sphere3d.atPoint enemy.location
+        (Length.meters 0.5)
+        |> Scene3d.sphere (Scene3d.Material.matte Color.red)
