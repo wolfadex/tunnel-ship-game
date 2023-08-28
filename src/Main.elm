@@ -393,8 +393,7 @@ view : Model -> Browser.Document Msg
 view model =
     { title = "Elm App"
     , body =
-        [ Html.text "Hello, World!"
-        , Scene3d.cloudy
+        [ Scene3d.cloudy
             { dimensions = ( Pixels.int 800, Pixels.int 600 )
             , upDirection = Direction3d.negativeY
             , camera =
