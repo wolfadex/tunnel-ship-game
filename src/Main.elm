@@ -666,7 +666,7 @@ moveLaser deltaMs point =
 
 
 rotateAnimationTime =
-    200
+    100
 
 
 normalize : Float -> Float -> Float -> Float
