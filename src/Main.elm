@@ -166,9 +166,8 @@ init : () -> ( Model, Cmd Msg )
 init _ =
     let
         initialShape =
+            -- Shape.custom
             Shape.newRegular 7
-
-        -- Shape.custom
     in
     ( { ship = initialShip initialShape
       , lasers = []
