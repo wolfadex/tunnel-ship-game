@@ -815,7 +815,7 @@ viewLaser point =
         { radius = Length.meters 0.03125
         , length = Length.meters 1
         }
-        |> Scene3d.cylinder (Scene3d.Material.matte Color.blue)
+        |> Scene3d.cylinder (Scene3d.Material.matte Color.lightBlue)
 
 
 viewEnemy : Enemy -> Scene3d.Entity WorldCoordinates
