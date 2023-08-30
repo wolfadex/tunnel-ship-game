@@ -31,7 +31,7 @@ import Rectangle3d
 import Scene3d
 import Scene3d.Material
 import Scene3d.Mesh
-import Shape
+import Shape exposing (Shape)
 import SketchPlane3d
 import Sphere3d
 import Time
@@ -60,6 +60,7 @@ type alias Model =
     , nextEnemySpawn : Float
     , seed : Random.Seed
     , score : Int
+    , shape : Shape WorldCoordinates
     }
 
 
@@ -94,9 +95,9 @@ type WorldCoordinates
     = WorldCoordinates Never
 
 
-initialShip : Ship
-initialShip =
-    Shape.octagon
+initialShip : Polygon2d Meters coordinates -> Ship
+initialShip shape =
+    shape
         |> Polygon2d.vertices
         |> List.take 2
         |> to2Points
@@ -155,12 +156,17 @@ initialShip =
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { ship = initialShip
+    let
+        initialShape =
+            Shape.new 7
+    in
+    ( { ship = initialShip initialShape
       , lasers = []
       , enemies = []
       , nextEnemySpawn = enemySpawnRate
       , seed = Random.initialSeed 0
       , score = 0
+      , shape = initialShape
       }
     , Cmd.none
     )
@@ -277,7 +283,7 @@ spawnEnemy deltaMs model =
         let
             ( spawnPoint, seed ) =
                 Random.step
-                    (Shape.octagon
+                    (model.shape
                         |> Polygon2d.edges
                         |> List.map
                             (LineSegment3d.on
@@ -446,39 +452,38 @@ moveShip deltaMs model =
 
                 angle =
                     let
-                        point1 : Maybe (Point2d Meters coordinates)
+                        point1 : Maybe (Point2d Meters WorldCoordinates)
                         point1 =
-                            Shape.octagon
+                            model.shape
                                 |> Polygon2d.vertices
                                 |> List.Extra.getAt ship.rocket1Index
 
-                        point2 : Maybe (Point2d Meters coordinates)
+                        point2 : Maybe (Point2d Meters WorldCoordinates)
                         point2 =
-                            Shape.octagon
+                            model.shape
                                 |> Polygon2d.vertices
                                 |> List.Extra.getAt ship.rocket2Index
 
-                        point3 : Maybe (Point2d Meters coordinates)
+                        point3 : Maybe (Point2d Meters WorldCoordinates)
                         point3 =
-                            Shape.octagon
+                            model.shape
                                 |> Polygon2d.vertices
                                 |> List.Extra.getAt
-                                    (Util.Debug.logMap (\i3 -> ( ship.rocket1Index, ship.rocket2Index, i3 )) "p3 index" <|
-                                        modBy 8 <|
-                                            case direction of
-                                                Clockwise ->
-                                                    if ship.upIsNormal then
-                                                        ship.rocket1Index - 1
+                                    (modBy (Shape.sideCount model.shape) <|
+                                        case direction of
+                                            Clockwise ->
+                                                if ship.upIsNormal then
+                                                    ship.rocket1Index - 1
 
-                                                    else
-                                                        ship.rocket2Index - 1
+                                                else
+                                                    ship.rocket2Index - 1
 
-                                                CounterClockwise ->
-                                                    if ship.upIsNormal then
-                                                        ship.rocket2Index + 1
+                                            CounterClockwise ->
+                                                if ship.upIsNormal then
+                                                    ship.rocket2Index + 1
 
-                                                    else
-                                                        ship.rocket1Index + 1
+                                                else
+                                                    ship.rocket1Index + 1
                                     )
                     in
                     case direction of
@@ -585,14 +590,14 @@ moveShip deltaMs model =
                                         |> Length.meters
                                     )
                     }
-                        |> shipDoneMoving moving direction remainingTime
+                        |> shipDoneMoving model.shape moving direction remainingTime
             in
             { model | ship = newShip }
                 |> Util.Function.applyIf (moving.shootOnComplete && remainingTime <= 0) shootLaser
 
 
-shipDoneMoving : MovingDetails -> Direction -> Float -> Ship -> Ship
-shipDoneMoving moving direction remainingTime ship =
+shipDoneMoving : Shape WorldCoordinates -> MovingDetails -> Direction -> Float -> Ship -> Ship
+shipDoneMoving shape moving direction remainingTime ship =
     if remainingTime > 0 then
         { ship
             | moving =
@@ -611,14 +616,12 @@ shipDoneMoving moving direction remainingTime ship =
 
                         else
                             (ship.rocket2Index - 1)
-                                -- TODO: modBy sideCount
-                                |> modBy 8
+                                |> modBy (Shape.sideCount shape)
 
                     CounterClockwise ->
                         if ship.upIsNormal then
                             (ship.rocket2Index + 1)
-                                -- TODO: modBy sideCount
-                                |> modBy 8
+                                |> modBy (Shape.sideCount shape)
 
                         else
                             ship.rocket1Index
@@ -627,8 +630,7 @@ shipDoneMoving moving direction remainingTime ship =
                     Clockwise ->
                         if ship.upIsNormal then
                             (ship.rocket1Index - 1)
-                                -- TODO: modBy sideCount
-                                |> modBy 8
+                                |> modBy (Shape.sideCount shape)
 
                         else
                             ship.rocket2Index
@@ -639,8 +641,7 @@ shipDoneMoving moving direction remainingTime ship =
 
                         else
                             (ship.rocket1Index + 1)
-                                -- TODO: modBy sideCount
-                                |> modBy 8
+                                |> modBy (Shape.sideCount shape)
         }
 
 
@@ -657,7 +658,7 @@ moveLaser deltaMs point =
         newPoint =
             Point3d.translateIn Direction3d.positiveY (Length.meters (deltaMs * 0.1)) point
     in
-    if Point3d.yCoordinate newPoint |> Quantity.greaterThan (Length.meters 50) then
+    if Point3d.yCoordinate newPoint |> Quantity.greaterThan (Length.meters 70) then
         Nothing
 
     else
@@ -693,10 +694,10 @@ view model =
             , clipDepth = Length.millimeters 0.1
             , background = Scene3d.backgroundColor Color.black
             , entities =
-                [ tunnelRing (Length.meters 0)
-                , tunnelRing (Length.meters 10)
-                , tunnelRing (Length.meters 20)
-                , tunnelRing (Length.meters 30)
+                [ tunnelRing model.shape (Length.meters 0)
+                , tunnelRing model.shape (Length.meters 10)
+                , tunnelRing model.shape (Length.meters 20)
+                , tunnelRing model.shape (Length.meters 30)
                 , [ makeRailThingy model.ship.rocket1
                   , makeRailThingy model.ship.rocket2
                   , Scene3d.block (Scene3d.Material.matte Color.green)
@@ -735,9 +736,9 @@ to2Points points =
             ( Point2d.origin, Point2d.origin )
 
 
-tunnelRing : Length -> Scene3d.Entity coordinates
-tunnelRing distance =
-    Shape.octagon
+tunnelRing : Polygon2d Meters coordinates -> Length -> Scene3d.Entity coordinates
+tunnelRing shape distance =
+    shape
         |> Polygon2d.edges
         |> List.map
             (LineSegment3d.on
