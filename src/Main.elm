@@ -13,6 +13,7 @@ import Direction3d
 import Frame2d
 import Frame3d
 import Html exposing (Html)
+import Html.Attributes
 import Interval
 import Json.Decode
 import Length exposing (Length, Meters)
@@ -54,6 +55,7 @@ type alias Model =
     , enemies : List Enemy
     , nextEnemySpawn : Float
     , seed : Random.Seed
+    , score : Int
     }
 
 
@@ -148,6 +150,7 @@ init _ =
       , enemies = []
       , nextEnemySpawn = enemySpawnRate
       , seed = Random.initialSeed 0
+      , score = 0
       }
     , Cmd.none
     )
@@ -332,8 +335,16 @@ killEnemies model =
 
         -- TODO: Add explosion animation
         -- , enemiesToExplode = remaining.destroyedEnemies
-        -- TODO: Add score
-        -- , score = model.score + List.length remaining.destroyedEnemies * 100
+        , score =
+            remaining.destroyedEnemies
+                |> List.map
+                    (\enemy ->
+                        Point3d.yCoordinate enemy.location
+                            |> Length.inMeters
+                            |> round
+                    )
+                |> List.sum
+                |> (+) model.score
     }
 
 
@@ -596,6 +607,11 @@ view model =
                     |> Scene3d.group
                 ]
             }
+        , Html.div
+            []
+            [ Html.span [ Html.Attributes.class "score" ]
+                [ Html.text <| "Score " ++ String.fromInt model.score ]
+            ]
         ]
     }
 
