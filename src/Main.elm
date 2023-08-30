@@ -2,6 +2,7 @@ module Main exposing (..)
 
 import Angle
 import Block3d exposing (Block3d)
+import BoundingBox3d
 import Browser
 import Browser.Events
 import Camera3d
@@ -32,6 +33,7 @@ import SketchPlane3d
 import Sphere3d
 import Time
 import Util.Function
+import Util.List
 import Util.Random
 import Viewpoint3d
 
@@ -195,10 +197,11 @@ update msg model =
     case msg of
         Tick deltaMs ->
             ( model
-                |> moveEnemies deltaMs
-                |> spawnEnemy deltaMs
                 |> moveShip deltaMs
                 |> moveLasers deltaMs
+                |> spawnEnemy deltaMs
+                |> killEnemies
+                |> moveEnemies deltaMs
             , Cmd.none
             )
 
@@ -315,6 +318,85 @@ moveEnemy deltaMs enemy =
             { enemy
                 | location = newLocation
             }
+
+
+killEnemies : Model -> Model
+killEnemies model =
+    let
+        remaining =
+            checkLaserCollisions { enemies = model.enemies, lasers = model.lasers }
+    in
+    { model
+        | enemies = remaining.enemies
+        , lasers = remaining.lasers
+
+        -- TODO: Add explosion animation
+        -- , enemiesToExplode = remaining.destroyedEnemies
+        -- TODO: Add score
+        -- , score = model.score + List.length remaining.destroyedEnemies * 100
+    }
+
+
+checkLaserCollisions :
+    { enemies : List Enemy
+    , lasers : List Laser
+    }
+    ->
+        { enemies : List Enemy
+        , lasers : List Laser
+        , destroyedEnemies : List Enemy
+        }
+checkLaserCollisions input =
+    let
+        helper :
+            List Laser
+            -> { enemies : List Enemy, lasers : List Laser, destroyedEnemies : List Enemy }
+            -> { enemies : List Enemy, lasers : List Laser, destroyedEnemies : List Enemy }
+        helper lasers output =
+            case lasers of
+                [] ->
+                    output
+
+                nextLaser :: remainingLasers ->
+                    let
+                        ( maybeEnemy, restEnemies ) =
+                            Util.List.extractIf
+                                (\enemy ->
+                                    BoundingBox3d.intersects
+                                        (Sphere3d.atPoint enemy.location
+                                            (Length.meters 0.5)
+                                            |> Sphere3d.boundingBox
+                                        )
+                                        (Cylinder3d.centeredOn nextLaser
+                                            Direction3d.positiveY
+                                            { radius = Length.meters 0.03125
+                                            , length = Length.meters 1
+                                            }
+                                            |> Cylinder3d.boundingBox
+                                        )
+                                )
+                                output.enemies
+                    in
+                    case maybeEnemy of
+                        Nothing ->
+                            helper remainingLasers
+                                { output
+                                    | lasers = nextLaser :: output.lasers
+                                }
+
+                        Just enemy ->
+                            helper remainingLasers
+                                { output
+                                    | enemies = restEnemies
+                                    , destroyedEnemies = enemy :: output.destroyedEnemies
+                                }
+    in
+    helper
+        input.lasers
+        { enemies = input.enemies
+        , lasers = []
+        , destroyedEnemies = []
+        }
 
 
 shootLaser : Model -> Model
