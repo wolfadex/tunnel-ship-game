@@ -96,7 +96,7 @@ type WorldCoordinates
     = WorldCoordinates Never
 
 
-initialShip : Polygon2d Meters coordinates -> Ship
+initialShip : Shape coordinates -> Ship
 initialShip shape =
     shape
         |> Polygon2d.vertices
@@ -166,7 +166,9 @@ init : () -> ( Model, Cmd Msg )
 init _ =
     let
         initialShape =
-            Shape.new 7
+            Shape.newRegular 7
+
+        -- Shape.custom
     in
     ( { ship = initialShip initialShape
       , lasers = []
@@ -527,12 +529,14 @@ moveShip deltaMs model =
                                     (Util.Maybe.andThen2 Direction2d.from point1 point2)
                                     (Util.Maybe.andThen2 Direction2d.from point1 point3)
                                     |> Maybe.map Quantity.negate
+                                    |> Maybe.map (Util.Debug.logMap Angle.inDegrees "clock norm")
 
                             else
                                 Maybe.map2 Direction2d.angleFrom
                                     (Util.Maybe.andThen2 Direction2d.from point2 point1)
                                     (Util.Maybe.andThen2 Direction2d.from point2 point3)
                                     |> Maybe.map Quantity.negate
+                                    |> Maybe.map (Util.Debug.logMap Angle.inDegrees "clock ab-norm")
 
                         CounterClockwise ->
                             if ship.upIsNormal then
@@ -540,11 +544,13 @@ moveShip deltaMs model =
                                     (Util.Maybe.andThen2 Direction2d.from point2 point1)
                                     (Util.Maybe.andThen2 Direction2d.from point2 point3)
                                     |> Maybe.map Quantity.negate
+                                    |> Maybe.map (Util.Debug.logMap Angle.inDegrees "count-clock norm")
 
                             else
                                 Maybe.map2 Direction2d.angleFrom
                                     (Util.Maybe.andThen2 Direction2d.from point1 point3)
                                     (Util.Maybe.andThen2 Direction2d.from point1 point2)
+                                    |> Maybe.map (Util.Debug.logMap Angle.inDegrees "count-clock ab-norm")
 
                 distanceToRotate =
                     angle
@@ -773,7 +779,7 @@ to2Points points =
             ( Point2d.origin, Point2d.origin )
 
 
-viewTunnelRing : Polygon2d Meters coordinates -> Length -> Scene3d.Entity coordinates
+viewTunnelRing : Shape coordinates -> Length -> Scene3d.Entity coordinates
 viewTunnelRing shape distance =
     shape
         |> Polygon2d.edges
