@@ -40,6 +40,7 @@ import Util.Function
 import Util.List
 import Util.Maybe
 import Util.Random
+import Vector3d
 import Viewpoint3d
 
 
@@ -425,15 +426,12 @@ checkLaserCollisions input =
                             Util.List.extractIf
                                 (\enemy ->
                                     BoundingBox3d.intersects
-                                        (Sphere3d.atPoint enemy.location
-                                            (Length.meters 0.5)
-                                            |> Sphere3d.boundingBox
+                                        (enemy
+                                            |> enemyToGeometry
+                                            |> Cylinder3d.boundingBox
                                         )
-                                        (Cylinder3d.centeredOn nextLaser
-                                            Direction3d.positiveY
-                                            { radius = Length.meters 0.03125
-                                            , length = Length.meters 1
-                                            }
+                                        (nextLaser
+                                            |> laserToGeometry
                                             |> Cylinder3d.boundingBox
                                         )
                                 )
@@ -715,7 +713,7 @@ normalize minValue maxValue x =
 
 view : Model -> Browser.Document Msg
 view model =
-    { title = "Elm App"
+    { title = "Tunnle Rocket"
     , body =
         [ Scene3d.cloudy
             { dimensions = ( Pixels.int 800, Pixels.int 600 )
@@ -813,18 +811,45 @@ viewTunnelVertConnectors point =
             (Scene3d.Material.color Color.red)
 
 
-viewLaser : Point3d Meters coordinates -> Scene3d.Entity coordinates
-viewLaser point =
-    Cylinder3d.centeredOn point
+laserToGeometry : Laser -> Cylinder3d Meters WorldCoordinates
+laserToGeometry laser =
+    Cylinder3d.centeredOn laser
         Direction3d.positiveY
         { radius = Length.meters 0.03125
         , length = Length.meters 1
         }
+
+
+viewLaser : Laser -> Scene3d.Entity WorldCoordinates
+viewLaser laser =
+    laser
+        |> laserToGeometry
         |> Scene3d.cylinder (Scene3d.Material.matte Color.lightBlue)
+
+
+enemyToGeometry : Enemy -> Cylinder3d Meters WorldCoordinates
+enemyToGeometry enemy =
+    let
+        directionTowardsCenter =
+            enemy.location
+                |> Point3d.unwrap
+                |> (\p -> Point3d.unsafe { p | x = 0, z = 0 })
+                |> Direction3d.from enemy.location
+                |> Maybe.withDefault Direction3d.positiveX
+
+        height =
+            0.5
+    in
+    Cylinder3d.centeredOn enemy.location
+        directionTowardsCenter
+        { radius = Length.meters 0.25
+        , length = Length.meters height
+        }
+        |> Cylinder3d.translateIn directionTowardsCenter (Length.meters (height / 2))
 
 
 viewEnemy : Enemy -> Scene3d.Entity WorldCoordinates
 viewEnemy enemy =
-    Sphere3d.atPoint enemy.location
-        (Length.meters 0.5)
-        |> Scene3d.sphere (Scene3d.Material.matte Color.red)
+    enemy
+        |> enemyToGeometry
+        |> Scene3d.cylinder (Scene3d.Material.matte Color.red)
