@@ -61,6 +61,7 @@ type alias Model =
     , seed : Random.Seed
     , score : Int
     , shape : Shape WorldCoordinates
+    , tunnelOffset : Float
     }
 
 
@@ -99,7 +100,14 @@ initialShip : Polygon2d Meters coordinates -> Ship
 initialShip shape =
     shape
         |> Polygon2d.vertices
-        |> List.take 2
+        |> (\verts ->
+                List.filterMap identity
+                    [ List.head verts
+                    , verts
+                        |> List.reverse
+                        |> List.head
+                    ]
+           )
         |> to2Points
         |> (\( a, b ) ->
                 let
@@ -117,17 +125,17 @@ initialShip shape =
                             , length = Length.meters 1
                             }
                 in
-                { rocket1 = makeRailRocket a
+                { rocket1 = makeRailRocket b
                 , rocket1Index = 0
-                , rocket2 = makeRailRocket b
+                , rocket2 = makeRailRocket a
                 , rocket2Index = 1
                 , body =
                     let
                         frame2d =
-                            LineSegment2d.from a b
+                            LineSegment2d.from b a
                                 |> LineSegment2d.midpoint
                                 |> Frame2d.withXDirection
-                                    (Direction2d.from a b
+                                    (Direction2d.from b a
                                         |> Maybe.withDefault Direction2d.positiveX
                                     )
 
@@ -167,6 +175,7 @@ init _ =
       , seed = Random.initialSeed 0
       , score = 0
       , shape = initialShape
+      , tunnelOffset = 0
       }
     , Cmd.none
     )
@@ -221,6 +230,7 @@ update msg model =
                 |> spawnEnemy deltaMs
                 |> killEnemies
                 |> moveEnemies deltaMs
+                |> moveTunnel deltaMs
             , Cmd.none
             )
 
@@ -267,6 +277,26 @@ update msg model =
                     }
             , Cmd.none
             )
+
+
+moveTunnel : Float -> Model -> Model
+moveTunnel deltaMs model =
+    let
+        tunnelOffset =
+            model.tunnelOffset + (deltaMs / enemyMoveSpeed)
+    in
+    { model
+        | tunnelOffset =
+            if tunnelOffset >= tunnelMoveMax then
+                tunnelOffset - tunnelMoveMax
+
+            else
+                tunnelOffset
+    }
+
+
+tunnelMoveMax =
+    10
 
 
 enemySpawnRate =
@@ -322,12 +352,16 @@ moveEnemies deltaMs model =
     }
 
 
+enemyMoveSpeed =
+    50
+
+
 moveEnemy : Float -> Enemy -> Maybe Enemy
 moveEnemy deltaMs enemy =
     let
         newLocation =
             enemy.location
-                |> Point3d.translateIn Direction3d.negativeY (Length.meters (deltaMs * 0.01))
+                |> Point3d.translateIn Direction3d.negativeY (Length.meters (deltaMs / enemyMoveSpeed))
     in
     if Point3d.yCoordinate newLocation |> Quantity.lessThan (Length.meters -10) then
         Nothing
@@ -694,10 +728,13 @@ view model =
             , clipDepth = Length.millimeters 0.1
             , background = Scene3d.backgroundColor Color.black
             , entities =
-                [ tunnelRing model.shape (Length.meters 0)
-                , tunnelRing model.shape (Length.meters 10)
-                , tunnelRing model.shape (Length.meters 20)
-                , tunnelRing model.shape (Length.meters 30)
+                [ [ 0, 10, 20, 30, 40, 50, 60 ]
+                    |> List.map (\dist -> viewTunnelRing model.shape (Length.meters (dist - model.tunnelOffset)))
+                    |> Scene3d.group
+                , model.shape
+                    |> Polygon2d.vertices
+                    |> List.map viewTunnelVertConnectors
+                    |> Scene3d.group
                 , [ makeRailThingy model.ship.rocket1
                   , makeRailThingy model.ship.rocket2
                   , Scene3d.block (Scene3d.Material.matte Color.green)
@@ -736,8 +773,8 @@ to2Points points =
             ( Point2d.origin, Point2d.origin )
 
 
-tunnelRing : Polygon2d Meters coordinates -> Length -> Scene3d.Entity coordinates
-tunnelRing shape distance =
+viewTunnelRing : Polygon2d Meters coordinates -> Length -> Scene3d.Entity coordinates
+viewTunnelRing shape distance =
     shape
         |> Polygon2d.edges
         |> List.map
@@ -746,6 +783,26 @@ tunnelRing shape distance =
                     |> SketchPlane3d.translateIn Direction3d.positiveY distance
                 )
             )
+        |> Scene3d.Mesh.lineSegments
+        |> Scene3d.mesh
+            (Scene3d.Material.color Color.red)
+
+
+viewTunnelVertConnectors : Point2d Meters coordinates -> Scene3d.Entity coordinates
+viewTunnelVertConnectors point =
+    let
+        point3d =
+            Point3d.on
+                SketchPlane3d.xz
+                point
+    in
+    point3d
+        |> Point3d.translateIn Direction3d.positiveY (Length.meters 90)
+        |> LineSegment3d.from
+            (point3d
+                |> Point3d.translateIn Direction3d.positiveY (Length.meters -50)
+            )
+        |> List.singleton
         |> Scene3d.Mesh.lineSegments
         |> Scene3d.mesh
             (Scene3d.Material.color Color.red)
