@@ -61,6 +61,7 @@ main =
 
 type alias Model =
     { ship : Ship
+    , otherShips : List Ship
     , lasers : List Laser
     , enemies : List Enemy
     , nextEnemySpawn : Float
@@ -103,70 +104,57 @@ type WorldCoordinates
     = WorldCoordinates Never
 
 
-initialShip : Shape coordinates -> Ship
-initialShip shape =
-    shape
-        |> Polygon2d.vertices
-        |> (\verts ->
-                List.filterMap identity
-                    [ List.head verts
-                    , verts
-                        |> List.reverse
-                        |> List.head
-                    ]
-           )
-        |> to2Points
-        |> (\( a, b ) ->
-                let
-                    makeRailRocket : Point2d Meters coordinates -> Cylinder3d Meters WorldCoordinates
-                    makeRailRocket point =
-                        Cylinder3d.centeredOn
-                            (Point3d.on
-                                (SketchPlane3d.xz
-                                    |> SketchPlane3d.translateIn Direction3d.positiveY (Length.meters 0)
-                                )
-                                point
-                            )
-                            Direction3d.positiveY
-                            { radius = Length.meters 0.0625
-                            , length = Length.meters 1
-                            }
-                in
-                { rocket1 = makeRailRocket b
-                , rocket1Index = 0
-                , rocket2 = makeRailRocket a
-                , rocket2Index = 1
-                , body =
-                    let
-                        frame2d =
-                            LineSegment2d.from b a
-                                |> LineSegment2d.midpoint
-                                |> Frame2d.withXDirection
-                                    (Direction2d.from b a
-                                        |> Maybe.withDefault Direction2d.positiveX
-                                    )
-
-                        frame3d =
-                            Rectangle2d.centeredOn frame2d ( Length.meters 0.5, Length.meters 0.25 )
-                                |> Rectangle3d.on
-                                    (SketchPlane3d.xz
-                                        |> SketchPlane3d.translateIn Direction3d.positiveY (Length.meters 0)
-                                    )
-                                |> Rectangle3d.xAxis
-                                |> Frame3d.fromXAxis
-                    in
-                    Block3d.centeredOn frame3d
-                        ( Length.meters 0.25
-                        , Length.meters 0.125
-                        , Length.meters 1
-                        )
-                        |> Block3d.translateIn
-                            (Frame3d.yDirection frame3d)
-                            (Length.meters -0.125)
-                , moving = Nothing
-                , upIsNormal = True
+initShip : ( Point2d Meters WorldCoordinates, Point2d Meters WorldCoordinates ) -> Ship
+initShip ( a, b ) =
+    let
+        makeRailRocket : Point2d Meters coordinates -> Cylinder3d Meters WorldCoordinates
+        makeRailRocket point =
+            Cylinder3d.centeredOn
+                (Point3d.on
+                    (SketchPlane3d.xz
+                        |> SketchPlane3d.translateIn Direction3d.positiveY (Length.meters 0)
+                    )
+                    point
+                )
+                Direction3d.positiveY
+                { radius = Length.meters 0.0625
+                , length = Length.meters 1
                 }
-           )
+    in
+    { rocket1 = makeRailRocket a
+    , rocket1Index = 0
+    , rocket2 = makeRailRocket b
+    , rocket2Index = 1
+    , body =
+        let
+            frame2d =
+                LineSegment2d.from a b
+                    |> LineSegment2d.midpoint
+                    |> Frame2d.withXDirection
+                        (Direction2d.from a b
+                            |> Maybe.withDefault Direction2d.positiveX
+                        )
+
+            frame3d =
+                Rectangle2d.centeredOn frame2d ( Length.meters 0.5, Length.meters 0.25 )
+                    |> Rectangle3d.on
+                        (SketchPlane3d.xz
+                            |> SketchPlane3d.translateIn Direction3d.positiveY (Length.meters 0)
+                        )
+                    |> Rectangle3d.xAxis
+                    |> Frame3d.fromXAxis
+        in
+        Block3d.centeredOn frame3d
+            ( Length.meters 0.25
+            , Length.meters 0.125
+            , Length.meters 1
+            )
+            |> Block3d.translateIn
+                (Frame3d.yDirection frame3d)
+                (Length.meters -0.125)
+    , moving = Nothing
+    , upIsNormal = True
+    }
 
 
 init : () -> Update Model Msg
@@ -174,9 +162,41 @@ init () =
     let
         initialShape =
             -- Shape.custom
-            Shape.newRegular 7
+            Shape.newRegular 9
     in
-    { ship = initialShip initialShape
+    { ship =
+        initialShape
+            |> Polygon2d.vertices
+            |> (\verts ->
+                    List.filterMap identity
+                        [ verts
+                            |> List.reverse
+                            |> List.head
+                        , List.head verts
+                        ]
+               )
+            |> to2Points
+            |> initShip
+    , otherShips =
+        [ initialShape
+            |> Polygon2d.vertices
+            |> List.drop 1
+            |> List.take 2
+            |> to2Points
+            |> initShip
+        , initialShape
+            |> Polygon2d.vertices
+            |> List.drop 3
+            |> List.take 2
+            |> to2Points
+            |> initShip
+        , initialShape
+            |> Polygon2d.vertices
+            |> List.drop 5
+            |> List.take 2
+            |> to2Points
+            |> initShip
+        ]
     , lasers = []
     , enemies = []
     , nextEnemySpawn = enemySpawnRate
@@ -785,11 +805,9 @@ view model =
                     |> Polygon2d.vertices
                     |> List.map viewTunnelVertConnectors
                     |> Scene3d.group
-                , [ makeRailThingy model.ship.rocket1
-                  , makeRailThingy model.ship.rocket2
-                  , Scene3d.block (Scene3d.Material.matte Color.green)
-                        model.ship.body
-                  ]
+                , viewShip model.ship
+                , model.otherShips
+                    |> List.map viewShip
                     |> Scene3d.group
                 , model.lasers
                     |> List.map viewLaser
@@ -806,6 +824,16 @@ view model =
             ]
         ]
     }
+
+
+viewShip : Ship -> Scene3d.Entity WorldCoordinates
+viewShip ship =
+    [ makeRailThingy ship.rocket1
+    , makeRailThingy ship.rocket2
+    , Scene3d.block (Scene3d.Material.matte Color.green)
+        ship.body
+    ]
+        |> Scene3d.group
 
 
 makeRailThingy : Cylinder3d Meters coordinates -> Scene3d.Entity coordinates
