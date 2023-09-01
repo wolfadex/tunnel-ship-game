@@ -1,4 +1,4 @@
-module Main exposing (..)
+module Main exposing (Direction(..), Enemy, Laser, Model, MovingDetails, Msg(..), Ship, WorldCoordinates(..), main)
 
 import Angle
 import Block3d exposing (Block3d)
@@ -8,11 +8,11 @@ import Browser.Events
 import Camera3d
 import Color
 import Cylinder3d exposing (Cylinder3d)
-import Direction2d exposing (Direction2d)
-import Direction3d exposing (Direction3d)
+import Direction2d
+import Direction3d
 import Frame2d
 import Frame3d
-import Html exposing (Html)
+import Html
 import Html.Attributes
 import Interval
 import Json.Decode
@@ -23,7 +23,7 @@ import List.Extra
 import Pixels
 import Point2d exposing (Point2d)
 import Point3d exposing (Point3d)
-import Polygon2d exposing (Polygon2d)
+import Polygon2d
 import Quantity
 import Random
 import Rectangle2d
@@ -34,15 +34,12 @@ import Scene3d.Mesh
 import Set exposing (Set)
 import Shape exposing (Shape)
 import SketchPlane3d
-import Sphere3d
-import Time
 import Update exposing (Update)
 import Util.Debug
 import Util.Function
 import Util.List
 import Util.Maybe
 import Util.Random
-import Vector3d
 import Viewpoint3d
 
 
@@ -626,15 +623,15 @@ moveShip deltaMs =
                             else
                                 ship.rocket2
 
-                        bodyOffsetInterval =
-                            Interval.from -0.125 0.125
-
                         newShip =
                             { ship
                                 | rocket1 = newRocket1
                                 , rocket2 = newRocket2
                                 , body =
                                     let
+                                        bodyOffsetInterval =
+                                            Interval.from -0.125 0.125
+
                                         a : Point3d Meters WorldCoordinates
                                         a =
                                             newRocket1

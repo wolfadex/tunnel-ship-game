@@ -1,4 +1,4 @@
-module Util.Random exposing (..)
+module Util.Random exposing (fromList)
 
 import Random
 
