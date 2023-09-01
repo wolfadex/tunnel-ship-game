@@ -260,13 +260,13 @@ update msg model =
             model
                 |> Update.save
                 |> applyKeys
-                |> moveShip deltaMs
-                |> moveLasers deltaMs
-                |> spawnEnemy deltaMs
-                |> killEnemies
-                |> moveEnemies deltaMs
-                |> moveTunnel deltaMs
+                |> rotateShip deltaMs
 
+        -- |> moveLasers deltaMs
+        -- |> spawnEnemy deltaMs
+        -- |> killEnemies
+        -- |> moveEnemies deltaMs
+        -- |> moveTunnel deltaMs
         KeyDown key ->
             { model
                 | keysDown = Set.insert key model.keysDown
@@ -538,8 +538,8 @@ shootLaser model =
     }
 
 
-moveShip : Float -> Update Model Msg -> Update Model Msg
-moveShip deltaMs =
+rotateShip : Float -> Update Model Msg -> Update Model Msg
+rotateShip deltaMs =
     Update.mapModel
         (\model ->
             case model.ship.rotating of
@@ -795,8 +795,32 @@ view model =
                 Camera3d.perspective
                     { viewpoint =
                         Viewpoint3d.lookAt
-                            { eyePoint = Point3d.meters 0 -5 0
-                            , focalPoint = Point3d.origin
+                            { eyePoint =
+                                Point3d.meters
+                                    0
+                                    (model.ship.body
+                                        |> Block3d.centerPoint
+                                        |> Point3d.yCoordinate
+                                        |> Length.inMeters
+                                        |> (\y -> y - 5)
+                                    )
+                                    0
+                            , focalPoint =
+                                LineSegment3d.from
+                                    (model.ship.body
+                                        |> Block3d.centerPoint
+                                    )
+                                    (Point3d.meters
+                                        0
+                                        (model.ship.body
+                                            |> Block3d.centerPoint
+                                            |> Point3d.yCoordinate
+                                            |> Length.inMeters
+                                            |> (\y -> y + 5)
+                                        )
+                                        0
+                                    )
+                                    |> LineSegment3d.midpoint
                             , upDirection = Direction3d.positiveZ
                             }
                     , verticalFieldOfView = Angle.degrees 30
