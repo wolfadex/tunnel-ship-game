@@ -1,4 +1,14 @@
-module Main exposing (Direction(..), Enemy, Laser, Model, MovingDetails, Msg(..), Ship, WorldCoordinates(..), main)
+module Main exposing
+    ( Direction(..)
+    , Enemy
+    , Laser
+    , Model
+    , Msg(..)
+    , RotatingDetails
+    , Ship
+    , WorldCoordinates(..)
+    , main
+    )
 
 import Angle
 import Block3d exposing (Block3d)
@@ -88,12 +98,12 @@ type alias Ship =
     , rocket2 : Cylinder3d Meters WorldCoordinates
     , rocket2Index : Int
     , body : Block3d Meters WorldCoordinates
-    , moving : Maybe MovingDetails
+    , rotating : Maybe RotatingDetails
     , upIsNormal : Bool
     }
 
 
-type alias MovingDetails =
+type alias RotatingDetails =
     { travelTime : Float
     , direction : Direction
     , shootOnComplete : Bool
@@ -152,7 +162,7 @@ initShip ( a, b ) =
             |> Block3d.translateIn
                 (Frame3d.yDirection frame3d)
                 (Length.meters -0.125)
-    , moving = Nothing
+    , rotating = Nothing
     , upIsNormal = True
     }
 
@@ -277,8 +287,8 @@ update msg model =
             { model
                 | ship =
                     { ship
-                        | moving =
-                            case ship.moving of
+                        | rotating =
+                            case ship.rotating of
                                 Nothing ->
                                     Just
                                         { travelTime = rotateAnimationTime
@@ -287,19 +297,19 @@ update msg model =
                                         }
 
                                 Just _ ->
-                                    ship.moving
+                                    ship.rotating
                     }
             }
                 |> Update.save
 
         Shoot ->
-            case model.ship.moving of
+            case model.ship.rotating of
                 Nothing ->
                     model
                         |> shootLaser
                         |> Update.save
 
-                Just moving ->
+                Just rotating ->
                     let
                         ship =
                             model.ship
@@ -307,8 +317,8 @@ update msg model =
                     { model
                         | ship =
                             { ship
-                                | moving =
-                                    Just { moving | shootOnComplete = True }
+                                | rotating =
+                                    Just { rotating | shootOnComplete = True }
                             }
                     }
                         |> Update.save
@@ -532,11 +542,11 @@ moveShip : Float -> Update Model Msg -> Update Model Msg
 moveShip deltaMs =
     Update.mapModel
         (\model ->
-            case model.ship.moving of
+            case model.ship.rotating of
                 Nothing ->
                     model
 
-                Just ({ travelTime, direction } as moving) ->
+                Just ({ travelTime, direction } as rotating) ->
                     let
                         ship : Ship
                         ship =
@@ -589,14 +599,12 @@ moveShip deltaMs =
                                             (Util.Maybe.andThen2 Direction2d.from point1 point2)
                                             (Util.Maybe.andThen2 Direction2d.from point1 point3)
                                             |> Maybe.map Quantity.negate
-                                            |> Maybe.map (Util.Debug.logMap Angle.inDegrees "clock norm")
 
                                     else
                                         Maybe.map2 Direction2d.angleFrom
                                             (Util.Maybe.andThen2 Direction2d.from point2 point1)
                                             (Util.Maybe.andThen2 Direction2d.from point2 point3)
                                             |> Maybe.map Quantity.negate
-                                            |> Maybe.map (Util.Debug.logMap Angle.inDegrees "clock ab-norm")
 
                                 CounterClockwise ->
                                     if ship.upIsNormal then
@@ -604,13 +612,11 @@ moveShip deltaMs =
                                             (Util.Maybe.andThen2 Direction2d.from point2 point1)
                                             (Util.Maybe.andThen2 Direction2d.from point2 point3)
                                             |> Maybe.map Quantity.negate
-                                            |> Maybe.map (Util.Debug.logMap Angle.inDegrees "count-clock norm")
 
                                     else
                                         Maybe.map2 Direction2d.angleFrom
                                             (Util.Maybe.andThen2 Direction2d.from point1 point3)
                                             (Util.Maybe.andThen2 Direction2d.from point1 point2)
-                                            |> Maybe.map (Util.Debug.logMap Angle.inDegrees "count-clock ab-norm")
 
                         distanceToRotate =
                             angle
@@ -690,24 +696,24 @@ moveShip deltaMs =
                                                 |> Length.meters
                                             )
                             }
-                                |> shipDoneMoving model.shape moving direction remainingTime
+                                |> shipDoneRotating model.shape rotating direction remainingTime
                     in
                     { model | ship = newShip }
-                        |> Util.Function.applyIf (moving.shootOnComplete && remainingTime <= 0) shootLaser
+                        |> Util.Function.applyIf (rotating.shootOnComplete && remainingTime <= 0) shootLaser
         )
 
 
-shipDoneMoving : Shape WorldCoordinates -> MovingDetails -> Direction -> Float -> Ship -> Ship
-shipDoneMoving shape moving direction remainingTime ship =
+shipDoneRotating : Shape WorldCoordinates -> RotatingDetails -> Direction -> Float -> Ship -> Ship
+shipDoneRotating shape rotating direction remainingTime ship =
     if remainingTime > 0 then
         { ship
-            | moving =
-                Just { moving | travelTime = remainingTime }
+            | rotating =
+                Just { rotating | travelTime = remainingTime }
         }
 
     else
         { ship
-            | moving = Nothing
+            | rotating = Nothing
             , upIsNormal = not ship.upIsNormal
             , rocket1Index =
                 case direction of
