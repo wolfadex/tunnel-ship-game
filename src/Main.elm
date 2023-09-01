@@ -31,10 +31,12 @@ import Rectangle3d
 import Scene3d
 import Scene3d.Material
 import Scene3d.Mesh
+import Set exposing (Set)
 import Shape exposing (Shape)
 import SketchPlane3d
 import Sphere3d
 import Time
+import Update exposing (Update)
 import Util.Debug
 import Util.Function
 import Util.List
@@ -47,9 +49,15 @@ import Viewpoint3d
 main : Program () Model Msg
 main =
     Browser.document
-        { init = init
+        { init =
+            \flags ->
+                init flags
+                    |> Update.complete
         , view = view
-        , update = update
+        , update =
+            \msg model ->
+                update msg model
+                    |> Update.complete
         , subscriptions = subscriptions
         }
 
@@ -63,6 +71,7 @@ type alias Model =
     , score : Int
     , shape : Shape WorldCoordinates
     , tunnelOffset : Float
+    , keysDown : Set String
     }
 
 
@@ -163,24 +172,24 @@ initialShip shape =
            )
 
 
-init : () -> ( Model, Cmd Msg )
-init _ =
+init : () -> Update Model Msg
+init () =
     let
         initialShape =
             -- Shape.custom
             Shape.newRegular 7
     in
-    ( { ship = initialShip initialShape
-      , lasers = []
-      , enemies = []
-      , nextEnemySpawn = enemySpawnRate
-      , seed = Random.initialSeed 0
-      , score = 0
-      , shape = initialShape
-      , tunnelOffset = 0
-      }
-    , Cmd.none
-    )
+    { ship = initialShip initialShape
+    , lasers = []
+    , enemies = []
+    , nextEnemySpawn = enemySpawnRate
+    , seed = Random.initialSeed 0
+    , score = 0
+    , shape = initialShape
+    , tunnelOffset = 0
+    , keysDown = Set.empty
+    }
+        |> Update.save
 
 
 subscriptions : Model -> Sub Msg
@@ -188,31 +197,26 @@ subscriptions _ =
     Sub.batch
         [ Browser.Events.onAnimationFrameDelta Tick
         , Browser.Events.onKeyDown decodeKeyDown
+        , Browser.Events.onKeyUp decodeKeyUp
         ]
 
 
 decodeKeyDown : Json.Decode.Decoder Msg
 decodeKeyDown =
-    Json.Decode.andThen
-        (\key ->
-            case key of
-                "ArrowLeft" ->
-                    Json.Decode.succeed (Move Clockwise)
+    Json.Decode.map KeyDown
+        (Json.Decode.field "key" Json.Decode.string)
 
-                "ArrowRight" ->
-                    Json.Decode.succeed (Move CounterClockwise)
 
-                " " ->
-                    Json.Decode.succeed Shoot
-
-                _ ->
-                    Json.Decode.fail "Unsupported key"
-        )
+decodeKeyUp : Json.Decode.Decoder Msg
+decodeKeyUp =
+    Json.Decode.map KeyUp
         (Json.Decode.field "key" Json.Decode.string)
 
 
 type Msg
     = Tick Float
+    | KeyDown String
+    | KeyUp String
     | Move Direction
     | Shoot
 
@@ -222,26 +226,38 @@ type Direction
     | CounterClockwise
 
 
-update : Msg -> Model -> ( Model, Cmd Msg )
+update : Msg -> Model -> Update Model Msg
 update msg model =
     case msg of
         Tick deltaMs ->
-            ( model
+            model
+                |> Update.save
+                |> applyKeys
                 |> moveShip deltaMs
                 |> moveLasers deltaMs
                 |> spawnEnemy deltaMs
                 |> killEnemies
                 |> moveEnemies deltaMs
                 |> moveTunnel deltaMs
-            , Cmd.none
-            )
+
+        KeyDown key ->
+            { model
+                | keysDown = Set.insert key model.keysDown
+            }
+                |> Update.save
+
+        KeyUp key ->
+            { model
+                | keysDown = Set.remove key model.keysDown
+            }
+                |> Update.save
 
         Move direction ->
             let
                 ship =
                     model.ship
             in
-            ( { model
+            { model
                 | ship =
                     { ship
                         | moving =
@@ -256,14 +272,15 @@ update msg model =
                                 Just _ ->
                                     ship.moving
                     }
-              }
-            , Cmd.none
-            )
+            }
+                |> Update.save
 
         Shoot ->
-            ( case model.ship.moving of
+            case model.ship.moving of
                 Nothing ->
-                    shootLaser model
+                    model
+                        |> shootLaser
+                        |> Update.save
 
                 Just moving ->
                     let
@@ -277,24 +294,42 @@ update msg model =
                                     Just { moving | shootOnComplete = True }
                             }
                     }
-            , Cmd.none
-            )
+                        |> Update.save
 
 
-moveTunnel : Float -> Model -> Model
-moveTunnel deltaMs model =
+applyKeys : Update Model Msg -> Update Model Msg
+applyKeys =
     let
-        tunnelOffset =
-            model.tunnelOffset + (deltaMs / enemyMoveSpeed)
+        applyKey model key msg =
+            Util.Function.applyIf (Set.member key model.keysDown) msg
     in
-    { model
-        | tunnelOffset =
-            if tunnelOffset >= tunnelMoveMax then
-                tunnelOffset - tunnelMoveMax
+    Update.andThen
+        (\model ->
+            model
+                |> Update.save
+                |> applyKey model " " (Update.withMsg Shoot)
+                |> applyKey model "ArrowLeft" (Update.withMsg (Move Clockwise))
+                |> applyKey model "ArrowRight" (Update.withMsg (Move CounterClockwise))
+        )
 
-            else
-                tunnelOffset
-    }
+
+moveTunnel : Float -> Update Model Msg -> Update Model Msg
+moveTunnel deltaMs =
+    Update.mapModel
+        (\model ->
+            let
+                tunnelOffset =
+                    model.tunnelOffset + (deltaMs / enemyMoveSpeed)
+            in
+            { model
+                | tunnelOffset =
+                    if tunnelOffset >= tunnelMoveMax then
+                        tunnelOffset - tunnelMoveMax
+
+                    else
+                        tunnelOffset
+            }
+        )
 
 
 tunnelMoveMax =
@@ -305,53 +340,59 @@ enemySpawnRate =
     2000
 
 
-spawnEnemy : Float -> Model -> Model
-spawnEnemy deltaMs model =
-    let
-        nextEnemySpawn =
-            model.nextEnemySpawn - deltaMs
-    in
-    if nextEnemySpawn <= 0 then
-        let
-            ( spawnPoint, seed ) =
-                Random.step
-                    (model.shape
-                        |> Polygon2d.edges
-                        |> List.map
-                            (LineSegment3d.on
-                                (SketchPlane3d.xz
-                                    |> SketchPlane3d.translateIn Direction3d.positiveY (Length.meters 30)
-                                )
-                                >> LineSegment3d.midpoint
+spawnEnemy : Float -> Update Model Msg -> Update Model Msg
+spawnEnemy deltaMs =
+    Update.mapModel
+        (\model ->
+            let
+                nextEnemySpawn =
+                    model.nextEnemySpawn - deltaMs
+            in
+            if nextEnemySpawn <= 0 then
+                let
+                    ( spawnPoint, seed ) =
+                        Random.step
+                            (model.shape
+                                |> Polygon2d.edges
+                                |> List.map
+                                    (LineSegment3d.on
+                                        (SketchPlane3d.xz
+                                            |> SketchPlane3d.translateIn Direction3d.positiveY (Length.meters 30)
+                                        )
+                                        >> LineSegment3d.midpoint
+                                    )
+                                |> Util.Random.fromList
+                                |> Random.map (Maybe.withDefault Point3d.origin)
                             )
-                        |> Util.Random.fromList
-                        |> Random.map (Maybe.withDefault Point3d.origin)
-                    )
-                    model.seed
-        in
-        { model
-            | nextEnemySpawn = nextEnemySpawn + enemySpawnRate
-            , enemies =
-                { location =
-                    spawnPoint
-                        |> Point3d.translateIn Direction3d.positiveY (Length.meters 30)
+                            model.seed
+                in
+                { model
+                    | nextEnemySpawn = nextEnemySpawn + enemySpawnRate
+                    , enemies =
+                        { location =
+                            spawnPoint
+                                |> Point3d.translateIn Direction3d.positiveY (Length.meters 30)
+                        }
+                            :: model.enemies
+                    , seed = seed
                 }
-                    :: model.enemies
-            , seed = seed
-        }
 
-    else
-        { model
-            | nextEnemySpawn = nextEnemySpawn
-        }
+            else
+                { model
+                    | nextEnemySpawn = nextEnemySpawn
+                }
+        )
 
 
-moveEnemies : Float -> Model -> Model
-moveEnemies deltaMs model =
-    { model
-        | enemies =
-            List.filterMap (moveEnemy deltaMs) model.enemies
-    }
+moveEnemies : Float -> Update Model Msg -> Update Model Msg
+moveEnemies deltaMs =
+    Update.mapModel
+        (\model ->
+            { model
+                | enemies =
+                    List.filterMap (moveEnemy deltaMs) model.enemies
+            }
+        )
 
 
 enemyMoveSpeed =
@@ -375,29 +416,32 @@ moveEnemy deltaMs enemy =
             }
 
 
-killEnemies : Model -> Model
-killEnemies model =
-    let
-        remaining =
-            checkLaserCollisions { enemies = model.enemies, lasers = model.lasers }
-    in
-    { model
-        | enemies = remaining.enemies
-        , lasers = remaining.lasers
+killEnemies : Update Model Msg -> Update Model Msg
+killEnemies =
+    Update.mapModel
+        (\model ->
+            let
+                remaining =
+                    checkLaserCollisions { enemies = model.enemies, lasers = model.lasers }
+            in
+            { model
+                | enemies = remaining.enemies
+                , lasers = remaining.lasers
 
-        -- TODO: Add explosion animation
-        -- , enemiesToExplode = remaining.destroyedEnemies
-        , score =
-            remaining.destroyedEnemies
-                |> List.map
-                    (\enemy ->
-                        Point3d.yCoordinate enemy.location
-                            |> Length.inMeters
-                            |> round
-                    )
-                |> List.sum
-                |> (+) model.score
-    }
+                -- TODO: Add explosion animation
+                -- , enemiesToExplode = remaining.destroyedEnemies
+                , score =
+                    remaining.destroyedEnemies
+                        |> List.map
+                            (\enemy ->
+                                Point3d.yCoordinate enemy.location
+                                    |> Length.inMeters
+                                    |> round
+                            )
+                        |> List.sum
+                        |> (+) model.score
+            }
+        )
 
 
 checkLaserCollisions :
@@ -467,170 +511,173 @@ shootLaser model =
     }
 
 
-moveShip : Float -> Model -> Model
-moveShip deltaMs model =
-    case model.ship.moving of
-        Nothing ->
-            model
+moveShip : Float -> Update Model Msg -> Update Model Msg
+moveShip deltaMs =
+    Update.mapModel
+        (\model ->
+            case model.ship.moving of
+                Nothing ->
+                    model
 
-        Just ({ travelTime, direction } as moving) ->
-            let
-                ship : Ship
-                ship =
-                    model.ship
-
-                remainingTime : Float
-                remainingTime =
-                    travelTime - deltaMs
-
-                angle =
+                Just ({ travelTime, direction } as moving) ->
                     let
-                        point1 : Maybe (Point2d Meters WorldCoordinates)
-                        point1 =
-                            model.shape
-                                |> Polygon2d.vertices
-                                |> List.Extra.getAt ship.rocket1Index
+                        ship : Ship
+                        ship =
+                            model.ship
 
-                        point2 : Maybe (Point2d Meters WorldCoordinates)
-                        point2 =
-                            model.shape
-                                |> Polygon2d.vertices
-                                |> List.Extra.getAt ship.rocket2Index
+                        remainingTime : Float
+                        remainingTime =
+                            travelTime - deltaMs
 
-                        point3 : Maybe (Point2d Meters WorldCoordinates)
-                        point3 =
-                            model.shape
-                                |> Polygon2d.vertices
-                                |> List.Extra.getAt
-                                    (modBy (Shape.sideCount model.shape) <|
-                                        case direction of
-                                            Clockwise ->
-                                                if ship.upIsNormal then
-                                                    ship.rocket1Index - 1
-
-                                                else
-                                                    ship.rocket2Index - 1
-
-                                            CounterClockwise ->
-                                                if ship.upIsNormal then
-                                                    ship.rocket2Index + 1
-
-                                                else
-                                                    ship.rocket1Index + 1
-                                    )
-                    in
-                    case direction of
-                        Clockwise ->
-                            if ship.upIsNormal then
-                                Maybe.map2 Direction2d.angleFrom
-                                    (Util.Maybe.andThen2 Direction2d.from point1 point2)
-                                    (Util.Maybe.andThen2 Direction2d.from point1 point3)
-                                    |> Maybe.map Quantity.negate
-                                    |> Maybe.map (Util.Debug.logMap Angle.inDegrees "clock norm")
-
-                            else
-                                Maybe.map2 Direction2d.angleFrom
-                                    (Util.Maybe.andThen2 Direction2d.from point2 point1)
-                                    (Util.Maybe.andThen2 Direction2d.from point2 point3)
-                                    |> Maybe.map Quantity.negate
-                                    |> Maybe.map (Util.Debug.logMap Angle.inDegrees "clock ab-norm")
-
-                        CounterClockwise ->
-                            if ship.upIsNormal then
-                                Maybe.map2 Direction2d.angleFrom
-                                    (Util.Maybe.andThen2 Direction2d.from point2 point1)
-                                    (Util.Maybe.andThen2 Direction2d.from point2 point3)
-                                    |> Maybe.map Quantity.negate
-                                    |> Maybe.map (Util.Debug.logMap Angle.inDegrees "count-clock norm")
-
-                            else
-                                Maybe.map2 Direction2d.angleFrom
-                                    (Util.Maybe.andThen2 Direction2d.from point1 point3)
-                                    (Util.Maybe.andThen2 Direction2d.from point1 point2)
-                                    |> Maybe.map (Util.Debug.logMap Angle.inDegrees "count-clock ab-norm")
-
-                distanceToRotate =
-                    angle
-                        |> Maybe.map (Quantity.divideBy rotateAnimationTime)
-                        |> Maybe.withDefault (Angle.degrees 0)
-                        |> (if remainingTime > 0 then
-                                Quantity.multiplyBy deltaMs
-
-                            else
-                                Quantity.multiplyBy travelTime
-                           )
-
-                newRocket1 =
-                    if (ship.upIsNormal && direction == CounterClockwise) || (not ship.upIsNormal && direction == Clockwise) then
-                        Cylinder3d.rotateAround
-                            (Cylinder3d.axis ship.rocket2)
-                            distanceToRotate
-                            ship.rocket1
-
-                    else
-                        ship.rocket1
-
-                newRocket2 =
-                    if (ship.upIsNormal && direction == Clockwise) || (not ship.upIsNormal && direction == CounterClockwise) then
-                        Cylinder3d.rotateAround
-                            (Cylinder3d.axis ship.rocket1)
-                            distanceToRotate
-                            ship.rocket2
-
-                    else
-                        ship.rocket2
-
-                bodyOffsetInterval =
-                    Interval.from -0.125 0.125
-
-                newShip =
-                    { ship
-                        | rocket1 = newRocket1
-                        , rocket2 = newRocket2
-                        , body =
+                        angle =
                             let
-                                a : Point3d Meters WorldCoordinates
-                                a =
-                                    newRocket1
-                                        |> Cylinder3d.centerPoint
+                                point1 : Maybe (Point2d Meters WorldCoordinates)
+                                point1 =
+                                    model.shape
+                                        |> Polygon2d.vertices
+                                        |> List.Extra.getAt ship.rocket1Index
 
-                                b : Point3d Meters WorldCoordinates
-                                b =
-                                    newRocket2
-                                        |> Cylinder3d.centerPoint
+                                point2 : Maybe (Point2d Meters WorldCoordinates)
+                                point2 =
+                                    model.shape
+                                        |> Polygon2d.vertices
+                                        |> List.Extra.getAt ship.rocket2Index
 
-                                frame3d =
-                                    LineSegment3d.from a b
-                                        |> LineSegment3d.midpoint
-                                        |> Frame3d.withXDirection
-                                            (Direction3d.from a b
-                                                |> Maybe.withDefault Direction3d.positiveX
+                                point3 : Maybe (Point2d Meters WorldCoordinates)
+                                point3 =
+                                    model.shape
+                                        |> Polygon2d.vertices
+                                        |> List.Extra.getAt
+                                            (modBy (Shape.sideCount model.shape) <|
+                                                case direction of
+                                                    Clockwise ->
+                                                        if ship.upIsNormal then
+                                                            ship.rocket1Index - 1
+
+                                                        else
+                                                            ship.rocket2Index - 1
+
+                                                    CounterClockwise ->
+                                                        if ship.upIsNormal then
+                                                            ship.rocket2Index + 1
+
+                                                        else
+                                                            ship.rocket1Index + 1
                                             )
                             in
-                            Block3d.centeredOn frame3d
-                                ( Length.meters 0.25
-                                , Length.meters 0.125
-                                , Length.meters 1
-                                )
-                                |> Block3d.translateIn
-                                    (Frame3d.yDirection frame3d)
-                                    (max 0 remainingTime
-                                        |> (\x ->
-                                                if ship.upIsNormal then
-                                                    rotateAnimationTime - x
+                            case direction of
+                                Clockwise ->
+                                    if ship.upIsNormal then
+                                        Maybe.map2 Direction2d.angleFrom
+                                            (Util.Maybe.andThen2 Direction2d.from point1 point2)
+                                            (Util.Maybe.andThen2 Direction2d.from point1 point3)
+                                            |> Maybe.map Quantity.negate
+                                            |> Maybe.map (Util.Debug.logMap Angle.inDegrees "clock norm")
 
-                                                else
-                                                    x
-                                           )
-                                        |> normalize 0 rotateAnimationTime
-                                        |> Interval.interpolate bodyOffsetInterval
-                                        |> Length.meters
-                                    )
-                    }
-                        |> shipDoneMoving model.shape moving direction remainingTime
-            in
-            { model | ship = newShip }
-                |> Util.Function.applyIf (moving.shootOnComplete && remainingTime <= 0) shootLaser
+                                    else
+                                        Maybe.map2 Direction2d.angleFrom
+                                            (Util.Maybe.andThen2 Direction2d.from point2 point1)
+                                            (Util.Maybe.andThen2 Direction2d.from point2 point3)
+                                            |> Maybe.map Quantity.negate
+                                            |> Maybe.map (Util.Debug.logMap Angle.inDegrees "clock ab-norm")
+
+                                CounterClockwise ->
+                                    if ship.upIsNormal then
+                                        Maybe.map2 Direction2d.angleFrom
+                                            (Util.Maybe.andThen2 Direction2d.from point2 point1)
+                                            (Util.Maybe.andThen2 Direction2d.from point2 point3)
+                                            |> Maybe.map Quantity.negate
+                                            |> Maybe.map (Util.Debug.logMap Angle.inDegrees "count-clock norm")
+
+                                    else
+                                        Maybe.map2 Direction2d.angleFrom
+                                            (Util.Maybe.andThen2 Direction2d.from point1 point3)
+                                            (Util.Maybe.andThen2 Direction2d.from point1 point2)
+                                            |> Maybe.map (Util.Debug.logMap Angle.inDegrees "count-clock ab-norm")
+
+                        distanceToRotate =
+                            angle
+                                |> Maybe.map (Quantity.divideBy rotateAnimationTime)
+                                |> Maybe.withDefault (Angle.degrees 0)
+                                |> (if remainingTime > 0 then
+                                        Quantity.multiplyBy deltaMs
+
+                                    else
+                                        Quantity.multiplyBy travelTime
+                                   )
+
+                        newRocket1 =
+                            if (ship.upIsNormal && direction == CounterClockwise) || (not ship.upIsNormal && direction == Clockwise) then
+                                Cylinder3d.rotateAround
+                                    (Cylinder3d.axis ship.rocket2)
+                                    distanceToRotate
+                                    ship.rocket1
+
+                            else
+                                ship.rocket1
+
+                        newRocket2 =
+                            if (ship.upIsNormal && direction == Clockwise) || (not ship.upIsNormal && direction == CounterClockwise) then
+                                Cylinder3d.rotateAround
+                                    (Cylinder3d.axis ship.rocket1)
+                                    distanceToRotate
+                                    ship.rocket2
+
+                            else
+                                ship.rocket2
+
+                        bodyOffsetInterval =
+                            Interval.from -0.125 0.125
+
+                        newShip =
+                            { ship
+                                | rocket1 = newRocket1
+                                , rocket2 = newRocket2
+                                , body =
+                                    let
+                                        a : Point3d Meters WorldCoordinates
+                                        a =
+                                            newRocket1
+                                                |> Cylinder3d.centerPoint
+
+                                        b : Point3d Meters WorldCoordinates
+                                        b =
+                                            newRocket2
+                                                |> Cylinder3d.centerPoint
+
+                                        frame3d =
+                                            LineSegment3d.from a b
+                                                |> LineSegment3d.midpoint
+                                                |> Frame3d.withXDirection
+                                                    (Direction3d.from a b
+                                                        |> Maybe.withDefault Direction3d.positiveX
+                                                    )
+                                    in
+                                    Block3d.centeredOn frame3d
+                                        ( Length.meters 0.25
+                                        , Length.meters 0.125
+                                        , Length.meters 1
+                                        )
+                                        |> Block3d.translateIn
+                                            (Frame3d.yDirection frame3d)
+                                            (max 0 remainingTime
+                                                |> (\x ->
+                                                        if ship.upIsNormal then
+                                                            rotateAnimationTime - x
+
+                                                        else
+                                                            x
+                                                   )
+                                                |> normalize 0 rotateAnimationTime
+                                                |> Interval.interpolate bodyOffsetInterval
+                                                |> Length.meters
+                                            )
+                            }
+                                |> shipDoneMoving model.shape moving direction remainingTime
+                    in
+                    { model | ship = newShip }
+                        |> Util.Function.applyIf (moving.shootOnComplete && remainingTime <= 0) shootLaser
+        )
 
 
 shipDoneMoving : Shape WorldCoordinates -> MovingDetails -> Direction -> Float -> Ship -> Ship
@@ -682,11 +729,14 @@ shipDoneMoving shape moving direction remainingTime ship =
         }
 
 
-moveLasers : Float -> Model -> Model
-moveLasers deltaMs model =
-    { model
-        | lasers = List.filterMap (moveLaser deltaMs) model.lasers
-    }
+moveLasers : Float -> Update Model Msg -> Update Model Msg
+moveLasers deltaMs =
+    Update.mapModel
+        (\model ->
+            { model
+                | lasers = List.filterMap (moveLaser deltaMs) model.lasers
+            }
+        )
 
 
 moveLaser : Float -> Point3d Meters WorldCoordinates -> Maybe (Point3d Meters WorldCoordinates)
@@ -703,7 +753,7 @@ moveLaser deltaMs point =
 
 
 rotateAnimationTime =
-    100
+    150
 
 
 normalize : Float -> Float -> Float -> Float
@@ -788,7 +838,7 @@ viewTunnelRing shape distance =
             )
         |> Scene3d.Mesh.lineSegments
         |> Scene3d.mesh
-            (Scene3d.Material.color Color.red)
+            (Scene3d.Material.color Color.lightPurple)
 
 
 viewTunnelVertConnectors : Point2d Meters coordinates -> Scene3d.Entity coordinates
@@ -808,7 +858,7 @@ viewTunnelVertConnectors point =
         |> List.singleton
         |> Scene3d.Mesh.lineSegments
         |> Scene3d.mesh
-            (Scene3d.Material.color Color.red)
+            (Scene3d.Material.color Color.lightPurple)
 
 
 laserToGeometry : Laser -> Cylinder3d Meters WorldCoordinates
