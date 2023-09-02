@@ -4,13 +4,3 @@ body {
     margin: 0;
     padding: 0;
 }
-
-.score {
-    color: cornflowerblue;
-    font-size: 2rem;
-    font-weight: bold;
-    font-family: 'Courier New', Courier, monospace;
-    position: absolute;
-    top: 1rem;
-    left: 1rem;
-}

@@ -76,7 +76,6 @@ type alias Model =
     , enemies : List Enemy
     , nextEnemySpawn : Float
     , seed : Random.Seed
-    , score : Int
     , shape : Shape WorldCoordinates
     , tunnelOffset : Float
     , keysDown : Set String
@@ -188,30 +187,30 @@ init () =
             |> to2Points
             |> initShip
     , otherShips =
-        [ initialShape
-            |> Polygon2d.vertices
-            |> List.drop 1
-            |> List.take 2
-            |> to2Points
-            |> initShip
-        , initialShape
-            |> Polygon2d.vertices
-            |> List.drop 3
-            |> List.take 2
-            |> to2Points
-            |> initShip
-        , initialShape
-            |> Polygon2d.vertices
-            |> List.drop 5
-            |> List.take 2
-            |> to2Points
-            |> initShip
-        ]
+        -- [ initialShape
+        --     |> Polygon2d.vertices
+        --     |> List.drop 1
+        --     |> List.take 2
+        --     |> to2Points
+        --     |> initShip
+        -- , initialShape
+        --     |> Polygon2d.vertices
+        --     |> List.drop 3
+        --     |> List.take 2
+        --     |> to2Points
+        --     |> initShip
+        -- , initialShape
+        --     |> Polygon2d.vertices
+        --     |> List.drop 5
+        --     |> List.take 2
+        --     |> to2Points
+        --     |> initShip
+        -- ]
+        []
     , lasers = []
     , enemies = []
     , nextEnemySpawn = enemySpawnRate
     , seed = Random.initialSeed 0
-    , score = 0
     , shape = initialShape
     , tunnelOffset = 0
     , keysDown = Set.empty
@@ -457,16 +456,6 @@ killEnemies =
 
                 -- TODO: Add explosion animation
                 -- , enemiesToExplode = remaining.destroyedEnemies
-                , score =
-                    remaining.destroyedEnemies
-                        |> List.map
-                            (\enemy ->
-                                Point3d.yCoordinate enemy.location
-                                    |> Length.inMeters
-                                    |> round
-                            )
-                        |> List.sum
-                        |> (+) model.score
             }
         )
 
@@ -847,11 +836,6 @@ view model =
                     |> Scene3d.group
                 ]
             }
-        , Html.div
-            []
-            [ Html.span [ Html.Attributes.class "score" ]
-                [ Html.text <| "Score " ++ String.fromInt model.score ]
-            ]
         ]
     }
 
