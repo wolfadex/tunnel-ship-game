@@ -87,7 +87,7 @@ type alias Model =
 
 type alias Track =
     { shape : Shape WorldCoordinates
-    , path : CubicSpline3d Meters WorldCoordinates
+    , path : CubicSpline3d.Nondegenerate Meters WorldCoordinates
     , geometry : Scene3d.Entity WorldCoordinates
     }
 
@@ -120,7 +120,7 @@ type WorldCoordinates
     = WorldCoordinates Never
 
 
-initShip : CubicSpline3d Meters WorldCoordinates -> Shape WorldCoordinates -> Ship
+initShip : CubicSpline3d.Nondegenerate Meters WorldCoordinates -> Shape WorldCoordinates -> Ship
 initShip path shape =
     { geometry =
         Block3d.centeredOn Frame3d.atOrigin
@@ -141,7 +141,7 @@ init () =
             -- Shape.custom
             Shape.newRegular 24
 
-        path =
+        initialPath =
             CubicSpline3d.fromControlPoints
                 (Point3d.xyz
                     (Length.meters 0)
@@ -149,20 +149,40 @@ init () =
                     (Length.meters 0)
                 )
                 (Point3d.xyz
-                    (Length.meters 10)
-                    (Length.meters 33)
                     (Length.meters 0)
-                )
-                (Point3d.xyz
-                    (Length.meters -10)
-                    (Length.meters 66)
-                    (Length.meters -10)
+                    (Length.meters -20)
+                    (Length.meters 20)
                 )
                 (Point3d.xyz
                     (Length.meters 0)
-                    (Length.meters 100)
+                    (Length.meters 20)
+                    (Length.meters 20)
+                )
+                (Point3d.xyz
+                    (Length.meters 0)
+                    (Length.meters 1)
                     (Length.meters 0)
                 )
+                |> CubicSpline3d.nondegenerate
+
+        carl a =
+            case initialPath of
+                Ok p ->
+                    p
+
+                Err _ ->
+                    carl initialPath
+
+        path =
+            carl initialPath
+
+        arcLength =
+            CubicSpline3d.arcLengthParameterized
+                { maxError = Length.meters 0.01 }
+                path
+                |> CubicSpline3d.arcLength
+                |> Length.inKilometers
+                |> Debug.log "length"
     in
     { ship =
         initShip path initialShape
@@ -187,13 +207,7 @@ init () =
     --     |> to2Points
     --     |> initShip
     -- ]
-    -- , lasers = []
-    -- , enemies = []
-    -- , nextEnemySpawn = enemySpawnRate
     , seed = Random.initialSeed 0
-
-    -- , shape = initialShape
-    -- , tunnelOffset = 0
     , keysDown = Set.empty
     , track =
         { shape = initialShape
@@ -211,13 +225,8 @@ init () =
                         |> List.map
                             (\i ->
                                 let
-                                    p =
-                                        CubicSpline3d.pointOn path (toFloat i / segments)
-
-                                    dir =
-                                        CubicSpline3d.firstDerivative path (toFloat i / segments)
-                                            |> Vector3d.direction
-                                            |> Maybe.withDefault Direction3d.positiveY
+                                    ( p, dir ) =
+                                        CubicSpline3d.sample path (toFloat i / segments)
                                 in
                                 LineSegment3d.from p
                                     (p
@@ -230,13 +239,8 @@ init () =
                         |> List.map
                             (\i ->
                                 let
-                                    p =
-                                        CubicSpline3d.pointOn path (toFloat i / segments)
-
-                                    dir =
-                                        CubicSpline3d.secondDerivative path (toFloat i / segments)
-                                            |> Vector3d.direction
-                                            |> Maybe.withDefault Direction3d.positiveY
+                                    ( p, dir ) =
+                                        CubicSpline3d.sample path (toFloat i / segments)
                                 in
                                 LineSegment3d.from p
                                     (p
@@ -252,37 +256,16 @@ init () =
         |> Update.save
 
 
-sketchPlaneAt : CubicSpline3d Meters coordinates -> Float -> SketchPlane3d Meters coordinates defines
+sketchPlaneAt : CubicSpline3d.Nondegenerate Meters coordinates -> Float -> SketchPlane3d Meters coordinates defines
 sketchPlaneAt path dist =
     let
-        center =
-            CubicSpline3d.pointOn path dist
-
-        normal =
-            CubicSpline3d.firstDerivative path dist
-                |> Vector3d.direction
-                |> Maybe.withDefault Direction3d.positiveY
-
-        upDir =
-            CubicSpline3d.secondDerivative path dist
-                |> Vector3d.direction
-                |> Maybe.withDefault Direction3d.positiveY
-
-        xDir =
-            Vector3d.cross
-                (Direction3d.toVector normal)
-                (Direction3d.toVector upDir)
-                |> Vector3d.direction
-                |> Maybe.withDefault Direction3d.positiveX
+        ( center, normal ) =
+            CubicSpline3d.sample path dist
     in
-    SketchPlane3d.unsafe
-        { originPoint = center
-        , xDirection = xDir
-        , yDirection = upDir
-        }
+    SketchPlane3d.through center normal
 
 
-viewTunnelRing : Shape coordinates -> CubicSpline3d Meters coordinates -> Float -> Scene3d.Entity coordinates
+viewTunnelRing : Shape coordinates -> CubicSpline3d.Nondegenerate Meters coordinates -> Float -> Scene3d.Entity coordinates
 viewTunnelRing shape path dist =
     shape
         |> Polygon2d.edges
@@ -611,6 +594,12 @@ moveShip deltaTime =
                     ship.speed
                         |> Quantity.for deltaTime
                         |> Quantity.plus ship.distance
+
+                lengthOfTrack =
+                    CubicSpline3d.arcLengthParameterized
+                        { maxError = Length.meters 0.01 }
+                        model.track.path
+                        |> CubicSpline3d.arcLength
             in
             { model
                 | ship =
@@ -619,9 +608,9 @@ moveShip deltaTime =
                             ship.acceleration
                                 |> Quantity.for deltaTime
                                 |> Quantity.plus ship.speed
-                                |> Quantity.min (Speed.kilometersPerHour 1000)
+                                |> Quantity.min (Speed.kilometersPerHour 50)
                         , distance =
-                            if distance |> Quantity.greaterThan (Length.kilometers 10) then
+                            if distance |> Quantity.greaterThan lengthOfTrack then
                                 Length.kilometers 0
 
                             else
@@ -850,7 +839,7 @@ view model =
             eyeDist =
                 model.ship.distance
                     |> Length.inKilometers
-                    |> (\d -> d - 1)
+                    -- |> (\d -> d - 1)
                     |> normalize 0 10
 
             shipDist =
@@ -858,45 +847,81 @@ view model =
                     |> Length.inKilometers
                     |> normalize 0 10
 
-            focalPoint =
-                shipDist
-                    |> CubicSpline3d.pointOn model.track.path
+            ( focalPoint, _ ) =
+                CubicSpline3d.sample model.track.path shipDist
 
-            zDir =
-                shipDist
-                    |> CubicSpline3d.secondDerivative model.track.path
-                    |> Vector3d.direction
-                    |> Maybe.withDefault Direction3d.positiveZ
-
-            yDir =
-                shipDist
-                    |> CubicSpline3d.firstDerivative model.track.path
-                    |> Vector3d.direction
-                    |> Maybe.withDefault Direction3d.positiveZ
-
-            xDir =
-                Vector3d.cross
-                    (Direction3d.toVector zDir)
-                    (Direction3d.toVector yDir)
-                    |> Vector3d.direction
-                    |> Maybe.withDefault Direction3d.positiveX
+            -- zDir =
+            --     shipDist
+            --         |> CubicSpline3d.secondDerivative model.track.path
+            --         |> Vector3d.direction
+            --         |> Maybe.withDefault Direction3d.positiveZ
+            -- yDir =
+            --     shipDist
+            --         |> CubicSpline3d.firstDerivative model.track.path
+            --         |> Vector3d.direction
+            --         |> Maybe.withDefault Direction3d.positiveZ
+            -- xDir =
+            --     Vector3d.cross
+            --         (Direction3d.toVector zDir)
+            --         (Direction3d.toVector yDir)
+            --         |> Vector3d.direction
+            --         |> Maybe.withDefault Direction3d.positiveX
         in
         [ Scene3d.cloudy
             { dimensions = ( Pixels.int 800, Pixels.int 600 )
             , upDirection = Direction3d.negativeY
             , camera =
-                Camera3d.perspective
+                -- Camera3d.perspective
+                --     { viewpoint =
+                --         Viewpoint3d.lookAt
+                --             { eyePoint =
+                --                 -- eyeDist
+                --                 --     |> CubicSpline3d.pointOn model.track.path
+                --                 --     |> Point3d.translateIn (Direction3d.reverse zDir) (Length.meters 1.5)
+                --                 --     |> Point3d.translateIn (Direction3d.reverse xDir) (Length.meters 1.5)
+                --                 --     |> Point3d.translateIn (Direction3d.reverse yDir) (Length.meters 2.5)
+                --                 Point3d.meters
+                --                     40
+                --                     0
+                --                     30
+                --             , focalPoint =
+                --                 -- focalPoint
+                --                 Point3d.meters
+                --                     0
+                --                     0
+                --                     0
+                --             , upDirection =
+                --                 -- Direction3d.reverse zDir
+                --                 Direction3d.positiveZ
+                --             }
+                --     , verticalFieldOfView = Angle.degrees 30
+                --     }
+                Camera3d.orthographic
                     { viewpoint =
                         Viewpoint3d.lookAt
                             { eyePoint =
-                                eyeDist
-                                    |> CubicSpline3d.pointOn model.track.path
-                                    |> Point3d.translateIn (Direction3d.reverse zDir) (Length.meters 0.5)
-                                    |> Point3d.translateIn (Direction3d.reverse xDir) (Length.meters 0.5)
-                            , focalPoint = focalPoint
-                            , upDirection = Direction3d.reverse zDir
+                                -- eyeDist
+                                --     |> CubicSpline3d.pointOn model.track.path
+                                --     |> Point3d.translateIn (Direction3d.reverse zDir) (Length.meters 1.5)
+                                --     |> Point3d.translateIn (Direction3d.reverse xDir) (Length.meters 1.5)
+                                --     |> Point3d.translateIn (Direction3d.reverse yDir) (Length.meters 2.5)
+                                Point3d.meters
+                                    40
+                                    0
+                                    10
+                            , focalPoint =
+                                -- focalPoint
+                                Point3d.meters
+                                    0
+                                    0
+                                    10
+                            , upDirection =
+                                -- Direction3d.reverse zDir
+                                Direction3d.positiveZ
                             }
-                    , verticalFieldOfView = Angle.degrees 30
+
+                    -- , verticalFieldOfView = Angle.degrees 30
+                    , viewportHeight = Length.meters 20
                     }
             , clipDepth = Length.millimeters 0.1
             , background = Scene3d.backgroundColor Color.black
@@ -945,40 +970,56 @@ view model =
     }
 
 
-viewShip : Point3d Meters WorldCoordinates -> CubicSpline3d Meters WorldCoordinates -> Ship -> Scene3d.Entity WorldCoordinates
+viewShip : Point3d Meters WorldCoordinates -> CubicSpline3d.Nondegenerate Meters WorldCoordinates -> Ship -> Scene3d.Entity WorldCoordinates
 viewShip focalPoint path ship =
     let
+        arcLengthParam =
+            CubicSpline3d.arcLengthParameterized
+                { maxError = Length.meters 0.01 }
+                path
+
         dist =
             ship.distance
                 |> Length.inKilometers
-                |> normalize 0 10
 
-        zDir =
-            dist
-                |> CubicSpline3d.secondDerivative path
-                |> Vector3d.direction
-                |> Maybe.withDefault Direction3d.positiveZ
+        -- zDir =
+        --     dist
+        --         |> CubicSpline3d.secondDerivative path
+        --         |> Vector3d.direction
+        --         |> Maybe.withDefault Direction3d.positiveZ
+        -- yDir =
+        --     dist
+        --         |> CubicSpline3d.tangentDirection path
+        -- |> Vector3d.direction
+        -- |> Maybe.withDefault Direction3d.positiveZ
+        -- xDir =
+        --     Vector3d.cross
+        --         (Direction3d.toVector zDir)
+        --         (Direction3d.toVector yDir)
+        --         |> Vector3d.direction
+        --         |> Maybe.withDefault Direction3d.positiveX
+        ( center, normal ) =
+            CubicSpline3d.sampleAlong arcLengthParam ship.distance
 
-        yDir =
-            dist
-                |> CubicSpline3d.firstDerivative path
-                |> Vector3d.direction
-                |> Maybe.withDefault Direction3d.positiveZ
+        shipFinal =
+            ship.geometry
+                |> Block3d.placeIn
+                    (SketchPlane3d.through center normal
+                        |> SketchPlane3d.toFrame
+                    )
 
-        xDir =
-            Vector3d.cross
-                (Direction3d.toVector zDir)
-                (Direction3d.toVector yDir)
-                |> Vector3d.direction
-                |> Maybe.withDefault Direction3d.positiveX
+        -- |> Block3d.translateIn zDir (Length.meters 0.75)
     in
-    ship.geometry
-        |> Block3d.placeIn
-            (sketchPlaneAt path dist
-                |> SketchPlane3d.toFrame
+    Scene3d.group
+        [ shipFinal
+            |> Scene3d.block (Scene3d.Material.matte Color.green)
+        , LineSegment3d.from
+            (Block3d.centerPoint shipFinal)
+            (Block3d.centerPoint shipFinal
+                |> Point3d.translateIn normal (Length.meters 1)
             )
-        |> Block3d.translateIn zDir (Length.meters 0.75)
-        |> Scene3d.block (Scene3d.Material.matte Color.green)
+            |> Scene3d.lineSegment (Scene3d.Material.color Color.red)
+        ]
 
 
 makeRailThingy : Cylinder3d Meters coordinates -> Scene3d.Entity coordinates
