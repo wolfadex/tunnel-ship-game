@@ -50,6 +50,7 @@ import Set exposing (Set)
 import Shape exposing (Shape)
 import SketchPlane3d exposing (SketchPlane3d)
 import Speed exposing (Speed)
+import Time
 import Update exposing (Update)
 import Util.Debug
 import Util.Function
@@ -60,7 +61,7 @@ import Vector3d exposing (Vector3d)
 import Viewpoint3d
 
 
-main : Program () Model Msg
+main : Program Flags Model Msg
 main =
     Browser.document
         { init =
@@ -83,6 +84,7 @@ type alias Model =
     , seed : Random.Seed
     , keysDown : Set String
     , track : Track
+    , lastTickTime : Time.Posix
     }
 
 
@@ -140,19 +142,7 @@ type WorldCoordinates
     = WorldCoordinates Never
 
 
-initShip :
-    CubicSpline3d.Nondegenerate Meters WorldCoordinates
-    -> Shape WorldCoordinates
-    -- -> Ship
-    ->
-        { geometry : Block3d Meters WorldCoordinates
-        , speed : Speed
-        , acceleration : Acceleration
-        , distance : Length
-        , rotationSpeed : RotationSpeed
-        , rotationAcceleration : RotationAcceleration
-        , rotation : Angle
-        }
+initShip : CubicSpline3d.Nondegenerate Meters WorldCoordinates -> Shape WorldCoordinates -> Ship
 initShip path shape =
     { geometry =
         Block3d.centeredOn Frame3d.atOrigin
@@ -163,16 +153,18 @@ initShip path shape =
     , speed = Speed.kilometersPerHour 0
     , acceleration = Acceleration.metersPerSecondSquared 40
     , distance = Length.meters 0
-    , rotationSpeed =
-        -- Quantity.Quantity 5
-        Quantity.rate (Angle.degrees 50) (Duration.seconds 1)
+    , rotationSpeed = Quantity.rate (Angle.degrees 50) (Duration.seconds 1)
     , rotationAcceleration = Quantity.Quantity 1
     , rotation = Angle.degrees 0
     }
 
 
-init : () -> Update Model Msg
-init () =
+type alias Flags =
+    Float
+
+
+init : Flags -> Update Model Msg
+init timeNow =
     let
         initialShape =
             -- Shape.custom
@@ -219,7 +211,6 @@ init () =
                 path
                 |> CubicSpline3d.arcLength
                 |> Length.inKilometers
-                |> Debug.log "length"
     in
     { ship =
         initShip path initialShape
@@ -293,6 +284,7 @@ init () =
                     ]
                 |> Scene3d.group
         }
+    , lastTickTime = Time.millisToPosix (round timeNow)
     }
         |> Update.save
 
@@ -338,7 +330,7 @@ viewTunnelVertConnectors point =
 subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.batch
-        [ Browser.Events.onAnimationFrameDelta (Duration.milliseconds >> Tick)
+        [ Browser.Events.onAnimationFrame AnimationFrame
         , Browser.Events.onKeyDown decodeKeyDown
         , Browser.Events.onKeyUp decodeKeyUp
         ]
@@ -346,22 +338,35 @@ subscriptions _ =
 
 decodeKeyDown : Json.Decode.Decoder Msg
 decodeKeyDown =
-    Json.Decode.map KeyDown
-        (Json.Decode.field "key" Json.Decode.string)
+    Json.Decode.field "key" Json.Decode.string
+        |> Json.Decode.map KeyDown
+        |> decodeEvent
 
 
 decodeKeyUp : Json.Decode.Decoder Msg
 decodeKeyUp =
-    Json.Decode.map KeyUp
-        (Json.Decode.field "key" Json.Decode.string)
+    Json.Decode.field "key" Json.Decode.string
+        |> Json.Decode.map KeyUp
+        |> decodeEvent
+
+
+decodeEvent : Json.Decode.Decoder Event -> Json.Decode.Decoder Msg
+decodeEvent decoder =
+    Json.Decode.map2 Event
+        (Json.Decode.field "___timeStamp" Json.Decode.int
+            |> Json.Decode.map Time.millisToPosix
+        )
+        decoder
 
 
 type Msg
-    = Tick Duration
-    | KeyDown String
+    = AnimationFrame Time.Posix
+    | Event Time.Posix Event
+
+
+type Event
+    = KeyDown String
     | KeyUp String
-      -- | Shoot
-    | Move Direction
 
 
 type Direction
@@ -372,74 +377,52 @@ type Direction
 update : Msg -> Model -> Update Model Msg
 update msg model =
     case msg of
-        Tick deltaMs ->
-            model
-                |> Update.save
-                |> applyKeys
-                |> rotateShip deltaMs
-                |> moveShip deltaMs
+        AnimationFrame timestamp ->
+            { model | lastTickTime = timestamp }
+                |> tick (timeDelta model timestamp)
 
-        -- |> moveLasers deltaMs
-        -- |> spawnEnemy deltaMs
-        -- |> killEnemies
-        -- |> moveEnemies deltaMs
-        -- |> moveTunnel deltaMs
+        Event timestamp event ->
+            { model | lastTickTime = timestamp }
+                |> applyEvent event
+                |> tick (timeDelta model timestamp)
+
+
+timeDelta : Model -> Time.Posix -> Duration
+timeDelta model timestamp =
+    (Time.posixToMillis timestamp - Time.posixToMillis model.lastTickTime)
+        |> toFloat
+        |> Duration.milliseconds
+
+
+applyEvent : Event -> Model -> Model
+applyEvent event model =
+    case event of
         KeyDown key ->
             { model
                 | keysDown = Set.insert key model.keysDown
             }
-                |> Update.save
 
         KeyUp key ->
             { model
                 | keysDown = Set.remove key model.keysDown
             }
-                |> Update.save
 
-        Move direction ->
-            let
-                ship =
-                    model.ship
-            in
-            -- { model
-            --     | ship =
-            --         { ship
-            --             | rotating =
-            --                 case ship.rotating of
-            --                     Nothing ->
-            --                         Just
-            --                             { travelTime = rotateAnimationTime
-            --                             , direction = direction
-            --                             , shootOnComplete = False
-            --                             }
-            --                     Just _ ->
-            --                         ship.rotating
-            --         }
-            -- }
-            model
-                |> Update.save
+
+tick : Duration -> Model -> Update Model Msg
+tick deltaTime model =
+    model
+        |> Update.save
+        |> applyKeys
+        |> rotateShip deltaTime
+        |> moveShip deltaTime
 
 
 
--- Shoot ->
---     case model.ship.rotating of
---         Nothing ->
---             model
---                 |> shootLaser
---                 |> Update.save
---         Just rotating ->
---             let
---                 ship =
---                     model.ship
---             in
---             { model
---                 | ship =
---                     { ship
---                         | rotating =
---                             Just { rotating | shootOnComplete = True }
---                     }
---             }
---                 |> Update.save
+-- |> moveLasers deltaTime
+-- |> spawnEnemy deltaTime
+-- |> killEnemies
+-- |> moveEnemies deltaTime
+-- |> moveTunnel deltaTime
 
 
 applyKeys : Update Model Msg -> Update Model Msg
@@ -452,107 +435,10 @@ applyKeys =
         (\model ->
             model
                 |> Update.save
-                -- |> applyKey model " " (Update.withMsg Shoot)
-                |> applyKey model "ArrowLeft" (Update.withMsg (Move Clockwise))
-                |> applyKey model "ArrowRight" (Update.withMsg (Move CounterClockwise))
+         -- |> applyKey model " " (Update.withMsg Shoot)
+         -- |> applyKey model "ArrowLeft" (Update.withMsg (Move Clockwise))
+         -- |> applyKey model "ArrowRight" (Update.withMsg (Move CounterClockwise))
         )
-
-
-tunnelMoveMax =
-    10
-
-
-enemySpawnRate =
-    2000
-
-
-
--- spawnEnemy : Float -> Update Model Msg -> Update Model Msg
--- spawnEnemy deltaMs =
---     Update.mapModel
---         (\model ->
---             let
---                 nextEnemySpawn =
---                     model.nextEnemySpawn - deltaMs
---             in
---             if nextEnemySpawn <= 0 then
---                 let
---                     ( spawnPoint, seed ) =
---                         Random.step
---                             (model.shape
---                                 |> Polygon2d.edges
---                                 |> List.map
---                                     (LineSegment3d.on
---                                         (SketchPlane3d.xz
---                                             |> SketchPlane3d.translateIn Direction3d.positiveY (Length.meters 30)
---                                         )
---                                         >> LineSegment3d.midpoint
---                                     )
---                                 |> Util.Random.fromList
---                                 |> Random.map (Maybe.withDefault Point3d.origin)
---                             )
---                             model.seed
---                 in
---                 { model
---                     | nextEnemySpawn = nextEnemySpawn + enemySpawnRate
---                     , enemies =
---                         { location =
---                             spawnPoint
---                                 |> Point3d.translateIn Direction3d.positiveY (Length.meters 30)
---                         }
---                             :: model.enemies
---                     , seed = seed
---                 }
---             else
---                 { model
---                     | nextEnemySpawn = nextEnemySpawn
---                 }
---         )
--- moveEnemies : Float -> Update Model Msg -> Update Model Msg
--- moveEnemies deltaMs =
---     Update.mapModel
---         (\model ->
---             { model
---                 | enemies =
---                     List.filterMap (moveEnemy deltaMs) model.enemies
---             }
---         )
-
-
-enemyMoveSpeed =
-    50
-
-
-
--- moveEnemy : Float -> Enemy -> Maybe Enemy
--- moveEnemy deltaMs enemy =
---     let
---         newLocation =
---             enemy.location
---                 |> Point3d.translateIn Direction3d.negativeY (Length.meters (deltaMs / enemyMoveSpeed))
---     in
---     if Point3d.yCoordinate newLocation |> Quantity.lessThan (Length.meters -10) then
---         Nothing
---     else
---         Just
---             { enemy
---                 | location = newLocation
---             }
--- killEnemies : Update Model Msg -> Update Model Msg
--- killEnemies =
---     Update.mapModel
---         (\model ->
---             let
---                 remaining =
---                     checkLaserCollisions { enemies = model.enemies, lasers = model.lasers }
---             in
---             { model
---                 | enemies = remaining.enemies
---                 , lasers = remaining.lasers
---                 -- TODO: Add explosion animation
---                 -- , enemiesToExplode = remaining.destroyedEnemies
---             }
---         )
 
 
 checkLaserCollisions :
