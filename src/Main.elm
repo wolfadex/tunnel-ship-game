@@ -4,42 +4,16 @@ module Main exposing
     , main
     )
 
-import Acceleration exposing (Acceleration)
-import Angle exposing (Angle)
-import Axis3d
-import Block3d exposing (Block3d)
 import Browser
 import Browser.Events
-import Camera3d
-import Color
-import CubicSpline3d exposing (CubicSpline3d)
-import Cylinder3d exposing (Cylinder3d)
-import Direction3d exposing (Direction3d)
-import Duration exposing (Duration)
-import Frame3d
 import Html
 import Html.Attributes
-import Json.Decode
-import Length exposing (Length, Meters)
-import LineSegment3d
-import Pixels
-import Point2d exposing (Point2d)
-import Point3d exposing (Point3d)
-import Polygon2d
-import Quantity exposing (Quantity)
 import Race
 import Random
-import Scene3d
-import Scene3d.Material
-import Scene3d.Mesh
 import Set exposing (Set)
-import Shape exposing (Shape)
-import SketchPlane3d exposing (SketchPlane3d)
-import Speed exposing (Speed)
 import Time
+import TrackEditor
 import Update exposing (Update)
-import Vector3d exposing (Vector3d)
-import Viewpoint3d
 
 
 main : Program Flags Model Msg
@@ -59,7 +33,7 @@ main =
 
 
 type Model
-    = Editor
+    = TrackEditor TrackEditor.Model
     | Racing Race.Model
 
 
@@ -77,8 +51,9 @@ init timeNow =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     case model of
-        Editor ->
-            Sub.none
+        TrackEditor trackModel ->
+            TrackEditor.subscriptions trackModel
+                |> Sub.map TrackEditorMessage
 
         Racing raceModel ->
             Race.subscriptions raceModel
@@ -87,14 +62,22 @@ subscriptions model =
 
 type Msg
     = RaceMessage Race.Msg
+    | TrackEditorMessage TrackEditor.Msg
 
 
 update : Msg -> Model -> Update Model Msg
 update msg model =
     case model of
-        Editor ->
-            model
-                |> Update.save
+        TrackEditor trackModel ->
+            case msg of
+                TrackEditorMessage trackMsg ->
+                    TrackEditor.update trackMsg trackModel
+                        |> Update.mapModel TrackEditor
+                        |> Update.mapMsg TrackEditorMessage
+
+                _ ->
+                    model
+                        |> Update.save
 
         Racing raceModel ->
             case msg of
@@ -103,21 +86,21 @@ update msg model =
                         |> Update.mapModel Racing
                         |> Update.mapMsg RaceMessage
 
+                _ ->
+                    model
+                        |> Update.save
+
 
 view : Model -> Browser.Document Msg
 view model =
     { title = "Tunnle Rocket"
     , body =
         case model of
-            Editor ->
-                viewEditor
+            TrackEditor trackModel ->
+                TrackEditor.view trackModel
+                    |> List.map (Html.map TrackEditorMessage)
 
             Racing raceModel ->
                 Race.view raceModel
                     |> List.map (Html.map RaceMessage)
     }
-
-
-viewEditor : List (Html.Html msg)
-viewEditor =
-    []
