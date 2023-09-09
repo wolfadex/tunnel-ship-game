@@ -20,6 +20,7 @@ import Frame3d
 import Geometry.Svg
 import Html exposing (Html)
 import Html.Attributes
+import Html.Events
 import Json.Decode
 import Length exposing (Length, Meters)
 import LineSegment2d
@@ -53,6 +54,14 @@ type alias Model =
     { keysDown : Set String
     , track : Track
     , camera : EditorCamera
+    , debugFlags : DebugFlags
+    }
+
+
+type alias DebugFlags =
+    { tunnelVisible : Visible
+    , trackPathVisible : Visible
+    , trackPathDownDirectionVisible : Visible
     }
 
 
@@ -71,6 +80,11 @@ type alias Track =
 
 type WorldCoordinates
     = WorldCoordinates Never
+
+
+type Visible
+    = Visible
+    | Hidden
 
 
 type alias Flags =
@@ -119,12 +133,11 @@ init timeNow =
         path =
             carl initialPath
 
-        arcLength =
-            CubicSpline3d.arcLengthParameterized
-                { maxError = Length.meters 0.01 }
-                path
-                |> CubicSpline3d.arcLength
-                |> Length.inKilometers
+        debugFlags =
+            { tunnelVisible = Visible
+            , trackPathVisible = Visible
+            , trackPathDownDirectionVisible = Visible
+            }
     in
     { keysDown = Set.empty
     , camera =
@@ -141,32 +154,62 @@ init timeNow =
     , track =
         { shape = initialShape
         , path = path
-        , geometry =
-            let
-                segmentsInt : Int
-                segmentsInt =
-                    (arcLength * 1500)
-                        |> round
-
-                segmentsFloat : Float
-                segmentsFloat =
-                    toFloat segmentsInt
-            in
-            [ trackCenterGeometry path segmentsInt segmentsFloat
-            , trackDownGeometry path segmentsInt segmentsFloat
-            ]
-                |> List.append
-                    (List.range 0 segmentsInt
-                        |> List.map (\i -> viewTunnelRing initialShape path (toFloat i / segmentsFloat))
-                    )
-                |> Scene3d.group
+        , geometry = createTrackGeometry debugFlags initialShape path
         }
+    , debugFlags = debugFlags
     }
         |> Update.save
 
 
-trackCenterGeometry : CubicSpline3d.Nondegenerate Meters coordinates -> Int -> Float -> Scene3d.Entity coordinates
-trackCenterGeometry path segmentsInt segmentsFloat =
+createTrackGeometry : DebugFlags -> Shape coordinates -> CubicSpline3d.Nondegenerate Meters coordinates -> Scene3d.Entity coordinates
+createTrackGeometry debugFlags initialShape path =
+    let
+        arcLength =
+            CubicSpline3d.arcLengthParameterized
+                { maxError = Length.meters 0.01 }
+                path
+                |> CubicSpline3d.arcLength
+                |> Length.inKilometers
+
+        segmentsInt : Int
+        segmentsInt =
+            (arcLength * 1500)
+                |> round
+
+        segmentsFloat : Float
+        segmentsFloat =
+            toFloat segmentsInt
+    in
+    List.filterMap identity
+        [ case debugFlags.trackPathVisible of
+            Visible ->
+                createTrackPathGeometry path segmentsInt segmentsFloat
+                    |> Just
+
+            Hidden ->
+                Nothing
+        , case debugFlags.trackPathDownDirectionVisible of
+            Visible ->
+                createTrackDownGeometry path segmentsInt segmentsFloat
+                    |> Just
+
+            Hidden ->
+                Nothing
+        ]
+        |> List.append
+            (case debugFlags.tunnelVisible of
+                Visible ->
+                    List.range 0 segmentsInt
+                        |> List.map (\i -> viewTunnelRing initialShape path (toFloat i / segmentsFloat))
+
+                Hidden ->
+                    []
+            )
+        |> Scene3d.group
+
+
+createTrackPathGeometry : CubicSpline3d.Nondegenerate Meters coordinates -> Int -> Float -> Scene3d.Entity coordinates
+createTrackPathGeometry path segmentsInt segmentsFloat =
     List.range 0 segmentsInt
         |> List.map
             (\i ->
@@ -183,8 +226,8 @@ trackCenterGeometry path segmentsInt segmentsFloat =
         |> Scene3d.mesh (Scene3d.Material.color Color.red)
 
 
-trackDownGeometry : CubicSpline3d.Nondegenerate Meters coordinates -> Int -> Float -> Scene3d.Entity coordinates
-trackDownGeometry path segmentsInt segmentsFloat =
+createTrackDownGeometry : CubicSpline3d.Nondegenerate Meters coordinates -> Int -> Float -> Scene3d.Entity coordinates
+createTrackDownGeometry path segmentsInt segmentsFloat =
     List.range 0 segmentsInt
         |> List.map
             (\i ->
@@ -290,6 +333,9 @@ decodeEvent decoder =
 type Msg
     = AnimationFrame Time.Posix
     | Event Time.Posix Event
+    | DebugTrackPathToggled Visible
+    | DebugTrackPathDownDirectionToggled Visible
+    | DebugTunnelToggled Visible
 
 
 type Event
@@ -314,6 +360,62 @@ update msg model =
             model
                 |> applyEvent event
                 |> Update.save
+
+        DebugTrackPathToggled visible ->
+            let
+                debugFlags =
+                    model.debugFlags
+            in
+            { model
+                | debugFlags =
+                    { debugFlags
+                        | trackPathVisible = visible
+                    }
+            }
+                |> redrawTrackGeometry
+                |> Update.save
+
+        DebugTrackPathDownDirectionToggled visible ->
+            let
+                debugFlags =
+                    model.debugFlags
+            in
+            { model
+                | debugFlags =
+                    { debugFlags
+                        | trackPathDownDirectionVisible = visible
+                    }
+            }
+                |> redrawTrackGeometry
+                |> Update.save
+
+        DebugTunnelToggled visible ->
+            let
+                debugFlags =
+                    model.debugFlags
+            in
+            { model
+                | debugFlags =
+                    { debugFlags
+                        | tunnelVisible = visible
+                    }
+            }
+                |> redrawTrackGeometry
+                |> Update.save
+
+
+redrawTrackGeometry : Model -> Model
+redrawTrackGeometry model =
+    let
+        track =
+            model.track
+    in
+    { model
+        | track =
+            { track
+                | geometry = createTrackGeometry model.debugFlags track.shape track.path
+            }
+    }
 
 
 applyEvent : Event -> Model -> Model
@@ -490,6 +592,26 @@ view model =
                 |> Html.text
             ]
         ]
+    , Html.div
+        [ Html.Attributes.style "display" "flex"
+        , Html.Attributes.style "flex-direction" "column"
+        ]
+        [ viewVisible
+            { label = "Track path visible"
+            , value = model.debugFlags.trackPathVisible
+            , onChange = DebugTrackPathToggled
+            }
+        , viewVisible
+            { label = "Track path down direction visible"
+            , value = model.debugFlags.trackPathDownDirectionVisible
+            , onChange = DebugTrackPathDownDirectionToggled
+            }
+        , viewVisible
+            { label = "Tunnel visible"
+            , value = model.debugFlags.tunnelVisible
+            , onChange = DebugTunnelToggled
+            }
+        ]
     , viewControlPoints
         { width = 800
         , height = 600
@@ -602,4 +724,31 @@ viewControlPoints viewSize camera spline =
         ]
         [ controlPoints
         , segmentsSvgs
+        ]
+
+
+viewVisible : { label : String, onChange : Visible -> Msg, value : Visible } -> Html Msg
+viewVisible { onChange, value, label } =
+    Html.label []
+        [ Html.text label
+        , Html.input
+            [ Html.Attributes.type_ "checkbox"
+            , Html.Attributes.checked <|
+                case value of
+                    Visible ->
+                        True
+
+                    Hidden ->
+                        False
+            , Html.Events.onCheck
+                (\isChecked ->
+                    onChange <|
+                        if isChecked then
+                            Visible
+
+                        else
+                            Hidden
+                )
+            ]
+            []
         ]
