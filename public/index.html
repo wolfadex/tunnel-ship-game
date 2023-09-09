@@ -8,11 +8,34 @@
   <body>
     <script src="elm.js"></script>
     <script>
+      // This is a hack to get the timestamp of the event
       Object.defineProperty(Event.prototype, "___timeStamp", {
         get() {
           return Date.now();
         },
       });
+      // This is a hack to do pointer capture
+      Object.defineProperty(HTMLElement.prototype, "___capturePointer", {
+        set(pointerId) {
+          if (pointerId == null) {
+            this.releasePointerCapture(this.___pointerId);
+          } else {
+            this.___pointerId = pointerId;
+            this.setPointerCapture(pointerId);
+          }
+        },
+      });
+      Object.defineProperty(SVGElement.prototype, "___capturePointer", {
+        set(pointerId) {
+          if (pointerId == null) {
+            this.releasePointerCapture(this.___pointerId);
+          } else {
+            this.___pointerId = pointerId;
+            this.setPointerCapture(pointerId);
+          }
+        },
+      });
+      // End hacks
 
       var app = Elm.Main.init({ flags: Date.now() });
     </script>

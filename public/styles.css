@@ -14,3 +14,29 @@ body {
     /* top: 1rem;
     left: 1rem; */
 }
+
+.track-editor-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+.galactic-label-focus-civ * {
+    /* visibility: hidden; */
+    cursor: pointer;
+}
+
+.galactic-label-focus-civ circle {
+    /* visibility: visible; */
+}
+
+.galactic-label-focus-civ:active *,
+.galactic-label-focus-civ:focus *,
+.galactic-label-focus-civ:focus-within *,
+.galactic-label-focus-civ:hover * {
+    /* visibility: visible; */
+}
+
+.galactic-label-ignore {
+    pointer-events: none;
+}

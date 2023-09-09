@@ -2,29 +2,37 @@ module TrackEditor exposing (..)
 
 import Acceleration exposing (Acceleration)
 import Angle exposing (Angle)
+import Axis2d
 import Axis3d exposing (Axis3d)
 import Block3d exposing (Block3d)
 import Browser
 import Browser.Events
-import Camera3d
+import Camera3d exposing (Camera3d)
+import Circle2d
 import Color
 import CubicSpline3d exposing (CubicSpline3d)
 import Cylinder3d exposing (Cylinder3d)
+import Direction2d
 import Direction3d exposing (Direction3d)
 import Duration exposing (Duration)
+import Frame2d exposing (Frame2d)
 import Frame3d
+import Geometry.Svg
 import Html exposing (Html)
 import Html.Attributes
 import Json.Decode
 import Length exposing (Length, Meters)
+import LineSegment2d
 import LineSegment3d
 import Numeral
-import Pixels
+import Pixels exposing (Pixels)
 import Point2d exposing (Point2d)
 import Point3d exposing (Point3d)
+import Point3d.Projection
 import Polygon2d
 import Quantity exposing (Quantity)
 import Random
+import Rectangle2d exposing (Rectangle2d)
 import Scene3d
 import Scene3d.Material
 import Scene3d.Mesh
@@ -32,6 +40,8 @@ import Set exposing (Set)
 import Shape exposing (Shape)
 import SketchPlane3d exposing (SketchPlane3d)
 import Speed exposing (Speed)
+import Svg
+import Svg.Attributes
 import Time
 import Update exposing (Update)
 import Util.Function
@@ -72,29 +82,29 @@ init timeNow =
     let
         initialShape =
             -- Shape.custom
-            Shape.newRegular 7
+            Shape.newRegular 5
 
         initialPath =
             CubicSpline3d.fromControlPoints
                 (Point3d.xyz
+                    (Length.meters 1)
+                    (Length.meters 1)
                     (Length.meters 0)
-                    (Length.meters 0)
-                    (Length.meters 2)
                 )
                 (Point3d.xyz
-                    (Length.meters 0)
-                    (Length.meters -20)
+                    (Length.meters 5)
                     (Length.meters 20)
+                    (Length.meters 0)
                 )
                 (Point3d.xyz
+                    (Length.meters 9)
+                    (Length.meters -8)
                     (Length.meters 0)
-                    (Length.meters 20)
-                    (Length.meters 20)
                 )
                 (Point3d.xyz
+                    (Length.meters 13)
+                    (Length.meters 8)
                     (Length.meters 0)
-                    (Length.meters 10)
-                    (Length.meters 2)
                 )
                 |> CubicSpline3d.nondegenerate
 
@@ -120,11 +130,11 @@ init timeNow =
     , camera =
         let
             center =
-                Point3d.meters 10 10 10
+                Point3d.meters -6 -6 10
         in
         { center = center
         , forward =
-            Point3d.origin
+            Point3d.meters 4 4 0
                 |> Direction3d.from center
                 |> Maybe.withDefault Direction3d.positiveX
         }
@@ -133,50 +143,66 @@ init timeNow =
         , path = path
         , geometry =
             let
-                segments =
-                    100
-            in
-            List.range 1 segments
-                |> List.map (\i -> viewTunnelRing initialShape path (toFloat i / segments))
-                -- DEBUG BELOW
-                |> List.append
-                    [ List.range 1 100
-                        |> List.map
-                            (\i ->
-                                let
-                                    ( p, dir ) =
-                                        CubicSpline3d.sample path (toFloat i / segments)
-                                in
-                                LineSegment3d.from p
-                                    (p
-                                        |> Point3d.translateIn dir (Length.meters 1)
-                                    )
-                            )
-                        |> Scene3d.Mesh.lineSegments
-                        |> Scene3d.mesh (Scene3d.Material.color Color.red)
-                    , List.range 1 100
-                        |> List.map
-                            (\i ->
-                                let
-                                    ( p, _ ) =
-                                        CubicSpline3d.sample path (toFloat i / segments)
+                segmentsInt : Int
+                segmentsInt =
+                    (arcLength * 1500)
+                        |> round
 
-                                    dir =
-                                        sketchPlaneAt path (toFloat i / segments)
-                                            |> SketchPlane3d.yDirection
-                                in
-                                LineSegment3d.from p
-                                    (p
-                                        |> Point3d.translateIn dir (Length.meters 1)
-                                    )
-                            )
-                        |> Scene3d.Mesh.lineSegments
-                        |> Scene3d.mesh (Scene3d.Material.color Color.green)
-                    ]
+                segmentsFloat : Float
+                segmentsFloat =
+                    toFloat segmentsInt
+            in
+            [ trackCenterGeometry path segmentsInt segmentsFloat
+            , trackDownGeometry path segmentsInt segmentsFloat
+            ]
+                |> List.append
+                    (List.range 0 segmentsInt
+                        |> List.map (\i -> viewTunnelRing initialShape path (toFloat i / segmentsFloat))
+                    )
                 |> Scene3d.group
         }
     }
         |> Update.save
+
+
+trackCenterGeometry : CubicSpline3d.Nondegenerate Meters coordinates -> Int -> Float -> Scene3d.Entity coordinates
+trackCenterGeometry path segmentsInt segmentsFloat =
+    List.range 0 segmentsInt
+        |> List.map
+            (\i ->
+                let
+                    ( p, dir ) =
+                        CubicSpline3d.sample path (toFloat i / segmentsFloat)
+                in
+                LineSegment3d.from p
+                    (p
+                        |> Point3d.translateIn dir (Length.meters 1)
+                    )
+            )
+        |> Scene3d.Mesh.lineSegments
+        |> Scene3d.mesh (Scene3d.Material.color Color.red)
+
+
+trackDownGeometry : CubicSpline3d.Nondegenerate Meters coordinates -> Int -> Float -> Scene3d.Entity coordinates
+trackDownGeometry path segmentsInt segmentsFloat =
+    List.range 0 segmentsInt
+        |> List.map
+            (\i ->
+                let
+                    ( p, _ ) =
+                        CubicSpline3d.sample path (toFloat i / segmentsFloat)
+
+                    dir =
+                        sketchPlaneAt path (toFloat i / segmentsFloat)
+                            |> SketchPlane3d.yDirection
+                in
+                LineSegment3d.from p
+                    (p
+                        |> Point3d.translateIn dir (Length.meters 1)
+                    )
+            )
+        |> Scene3d.Mesh.lineSegments
+        |> Scene3d.mesh (Scene3d.Material.color Color.green)
 
 
 sketchPlaneAt : CubicSpline3d.Nondegenerate Meters coordinates -> Float -> SketchPlane3d Meters coordinates defines
@@ -399,10 +425,9 @@ applyEvent event model =
 
 view : Model -> List (Html Msg)
 view model =
-    [ Scene3d.cloudy
-        { dimensions = ( Pixels.int 800, Pixels.int 600 )
-        , upDirection = Direction3d.negativeY
-        , camera =
+    let
+        camera : Camera3d Meters WorldCoordinates
+        camera =
             Camera3d.perspective
                 { viewpoint =
                     Viewpoint3d.lookAt
@@ -414,6 +439,11 @@ view model =
                         }
                 , verticalFieldOfView = Angle.degrees 30
                 }
+    in
+    [ Scene3d.cloudy
+        { dimensions = ( Pixels.int 800, Pixels.int 600 )
+        , upDirection = Direction3d.negativeY
+        , camera = camera
         , clipDepth = Length.millimeters 0.1
         , background = Scene3d.backgroundColor Color.black
         , entities =
@@ -453,11 +483,123 @@ view model =
                     |> CubicSpline3d.arcLengthParameterized { maxError = Length.meters 0.01 }
                     |> CubicSpline3d.arcLength
                     |> Length.inKilometers
-                    |> Numeral.format "0,0.00"
+                    |> Numeral.format "0,0.000"
                )
                 ++ " km"
               )
                 |> Html.text
             ]
         ]
+    , viewControlPoints
+        { width = 800
+        , height = 600
+        }
+        camera
+        model.track.path
     ]
+
+
+type ScreenSpace
+    = ScreenSpace Never
+
+
+viewControlPoints : { width : Float, height : Float } -> Camera3d Meters WorldCoordinates -> CubicSpline3d.Nondegenerate Meters WorldCoordinates -> Html Msg
+viewControlPoints viewSize camera spline =
+    let
+        -- Take the 3D model for the logo and rotate it by the current angle
+        -- rotatedLogo =
+        --     blockEntity |> Scene3d.rotateAround Axis3d.z angle
+        -- Defines the shape of the 'screen' that we will be using when
+        --
+        -- projecting 3D points into 2D
+        screenRectangle : Rectangle2d Pixels.Pixels ScreenSpace
+        screenRectangle =
+            Point2d.pixels viewSize.width viewSize.height
+                |> Rectangle2d.from Point2d.origin
+
+        -- Take all vertices of the logo shape, rotate them the same amount as
+        -- the logo itself and then project them into 2D screen space
+        vertices2d : List (Point2d Pixels ScreenSpace)
+        vertices2d =
+            List.map (Point3d.Projection.toScreenSpace camera screenRectangle)
+                [ spline
+                    |> CubicSpline3d.fromNondegenerate
+                    |> CubicSpline3d.firstControlPoint
+                , spline
+                    |> CubicSpline3d.fromNondegenerate
+                    |> CubicSpline3d.secondControlPoint
+                , spline
+                    |> CubicSpline3d.fromNondegenerate
+                    |> CubicSpline3d.thirdControlPoint
+                , spline
+                    |> CubicSpline3d.fromNondegenerate
+                    |> CubicSpline3d.fourthControlPoint
+                ]
+
+        controlPoints : Svg.Svg msg
+        controlPoints =
+            List.map
+                (\vertex ->
+                    Svg.g
+                        [ Svg.Attributes.class "galactic-label-focus-civ"
+                        ]
+                        [ Geometry.Svg.circle2d
+                            [ Svg.Attributes.stroke "rgb(200, 255, 200)"
+                            , Svg.Attributes.strokeWidth "2"
+                            , Svg.Attributes.fill "rgba(0, 0, 0, 0)"
+
+                            -- TODO
+                            -- , Svg.Events.onClick (onPressSolarSystem solarSystemId)
+                            , Html.Attributes.attribute "tabindex" "0"
+                            ]
+                            (Circle2d.withRadius (Pixels.float 16) vertex)
+                        ]
+                )
+                vertices2d
+                |> Svg.g []
+                |> Geometry.Svg.relativeTo topLeftFrame
+
+        segmentsSvgs : Svg.Svg msg
+        segmentsSvgs =
+            List.foldl
+                (\controlPoint acc ->
+                    case acc of
+                        Nothing ->
+                            Just ( controlPoint, [] )
+
+                        Just ( previousControlPoint, segments ) ->
+                            Just
+                                ( controlPoint
+                                , Geometry.Svg.lineSegment2d
+                                    [ Svg.Attributes.stroke "red"
+                                    , Svg.Attributes.strokeWidth "0.5"
+                                    , Svg.Attributes.strokeDasharray "5 5"
+                                    , Svg.Attributes.class "galactic-label-ignore"
+                                    ]
+                                    (LineSegment2d.from previousControlPoint controlPoint)
+                                    :: segments
+                                )
+                )
+                Nothing
+                vertices2d
+                |> Maybe.map Tuple.second
+                |> Maybe.withDefault []
+                |> Svg.g []
+                |> Geometry.Svg.relativeTo topLeftFrame
+
+        -- Used for converting from coordinates relative to the bottom-left
+        -- corner of the 2D drawing into coordinates relative to the top-left
+        -- corner (which is what SVG natively works in)
+        topLeftFrame : Frame2d.Frame2d Pixels.Pixels coordinates defines2
+        topLeftFrame =
+            Frame2d.reverseY (Frame2d.atPoint (Point2d.xy Quantity.zero (Pixels.float viewSize.height)))
+    in
+    -- Create an SVG element with the projected points, lines and associated labels
+    Svg.svg
+        [ Html.Attributes.width (floor viewSize.width)
+        , Html.Attributes.height (floor viewSize.height)
+        , Svg.Attributes.class "track-editor-svg"
+        ]
+        [ controlPoints
+        , segmentsSvgs
+        ]
