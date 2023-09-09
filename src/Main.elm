@@ -43,9 +43,9 @@ type alias Flags =
 
 init : Flags -> Update Model Msg
 init timeNow =
-    Race.init timeNow
-        |> Update.mapModel Racing
-        |> Update.mapMsg RaceMessage
+    TrackEditor.init timeNow
+        |> Update.mapModel TrackEditor
+        |> Update.mapMsg TrackEditorMessage
 
 
 subscriptions : Model -> Sub Msg
