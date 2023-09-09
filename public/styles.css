@@ -21,22 +21,29 @@ body {
     left: 0;
 }
 
-.galactic-label-focus-civ * {
-    /* visibility: hidden; */
+.track-editor-control-point * {
+    opacity: 0.25;
     cursor: pointer;
 }
 
-.galactic-label-focus-civ circle {
-    /* visibility: visible; */
+.track-editor-control-point circle {
+    pointer-events: none;
 }
 
-.galactic-label-focus-civ:active *,
-.galactic-label-focus-civ:focus *,
-.galactic-label-focus-civ:focus-within *,
-.galactic-label-focus-civ:hover * {
-    /* visibility: visible; */
+.track-editor-control-point:active circle,
+.track-editor-control-point:focus circle,
+.track-editor-control-point:focus-within circle,
+.track-editor-control-point:hover circle {
+    opacity: 0.75;
 }
 
-.galactic-label-ignore {
+.track-editor-control-point-dir:active,
+.track-editor-control-point-dir:focus,
+.track-editor-control-point-dir:focus-within,
+.track-editor-control-point-dir:hover {
+    opacity: 1;
+}
+
+.track-editor-label-ignore {
     pointer-events: none;
 }
