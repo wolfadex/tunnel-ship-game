@@ -11,7 +11,8 @@ module Main exposing
     )
 
 import Acceleration exposing (Acceleration)
-import Angle
+import Angle exposing (Angle)
+import Axis3d
 import Block3d exposing (Block3d)
 import BoundingBox3d
 import Browser
@@ -38,7 +39,7 @@ import Point2d exposing (Point2d)
 import Point3d exposing (Point3d)
 import Polygon2d
 import Polyline3d
-import Quantity
+import Quantity exposing (Quantity)
 import Random
 import Rectangle2d
 import Rectangle3d
@@ -106,7 +107,26 @@ type alias Ship =
     , speed : Speed
     , acceleration : Acceleration
     , distance : Length
+    , rotationSpeed : RotationSpeed
+    , rotationAcceleration : RotationAcceleration
+    , rotation : Angle
     }
+
+
+type alias RotationSpeed =
+    Quantity Float RadiansPerSecond
+
+
+type alias RadiansPerSecond =
+    Quantity.Rate Angle.Radians Duration.Seconds
+
+
+type alias RadiansPerSecondSquared =
+    Quantity.Rate RotationSpeed Duration.Seconds
+
+
+type alias RotationAcceleration =
+    Quantity Float RadiansPerSecondSquared
 
 
 type alias RotatingDetails =
@@ -120,7 +140,19 @@ type WorldCoordinates
     = WorldCoordinates Never
 
 
-initShip : CubicSpline3d.Nondegenerate Meters WorldCoordinates -> Shape WorldCoordinates -> Ship
+initShip :
+    CubicSpline3d.Nondegenerate Meters WorldCoordinates
+    -> Shape WorldCoordinates
+    -- -> Ship
+    ->
+        { geometry : Block3d Meters WorldCoordinates
+        , speed : Speed
+        , acceleration : Acceleration
+        , distance : Length
+        , rotationSpeed : RotationSpeed
+        , rotationAcceleration : RotationAcceleration
+        , rotation : Angle
+        }
 initShip path shape =
     { geometry =
         Block3d.centeredOn Frame3d.atOrigin
@@ -131,6 +163,11 @@ initShip path shape =
     , speed = Speed.kilometersPerHour 0
     , acceleration = Acceleration.metersPerSecondSquared 40
     , distance = Length.meters 0
+    , rotationSpeed =
+        -- Quantity.Quantity 5
+        Quantity.rate (Angle.degrees 50) (Duration.seconds 1)
+    , rotationAcceleration = Quantity.Quantity 1
+    , rotation = Angle.degrees 0
     }
 
 
@@ -339,7 +376,7 @@ update msg model =
             model
                 |> Update.save
                 |> applyKeys
-                -- |> rotateShip deltaMs
+                |> rotateShip deltaMs
                 |> moveShip deltaMs
 
         -- |> moveLasers deltaMs
@@ -624,188 +661,36 @@ moveShip deltaTime =
         )
 
 
+rotateShip : Duration -> Update Model Msg -> Update Model Msg
+rotateShip deltaTime =
+    Update.mapModel
+        (\model ->
+            let
+                ship =
+                    model.ship
+            in
+            { model
+                | ship =
+                    { ship
+                        | rotation =
+                            if Set.member "ArrowRight" model.keysDown then
+                                ship.rotationSpeed
+                                    |> Quantity.for deltaTime
+                                    |> Quantity.difference ship.rotation
 
--- rotateShip : Duration -> Update Model Msg -> Update Model Msg
--- rotateShip deltaMs =
---     Update.mapModel
---         (\model ->
---             case model.ship.rotating of
---                 Nothing ->
---                     model
---                 Just ({ travelTime, direction } as rotating) ->
---                     let
---                         ship : Ship
---                         ship =
---                             model.ship
---                         remainingTime : Float
---                         remainingTime =
---                             travelTime - Duration.inMilliseconds deltaMs
---                         angle =
---                             let
---                                 point1 : Maybe (Point2d Meters WorldCoordinates)
---                                 point1 =
---                                     model.shape
---                                         |> Polygon2d.vertices
---                                         |> List.Extra.getAt ship.rocket1Index
---                                 point2 : Maybe (Point2d Meters WorldCoordinates)
---                                 point2 =
---                                     model.shape
---                                         |> Polygon2d.vertices
---                                         |> List.Extra.getAt ship.rocket2Index
---                                 point3 : Maybe (Point2d Meters WorldCoordinates)
---                                 point3 =
---                                     model.shape
---                                         |> Polygon2d.vertices
---                                         |> List.Extra.getAt
---                                             (modBy (Shape.sideCount model.shape) <|
---                                                 case direction of
---                                                     Clockwise ->
---                                                         if ship.upIsNormal then
---                                                             ship.rocket1Index - 1
---                                                         else
---                                                             ship.rocket2Index - 1
---                                                     CounterClockwise ->
---                                                         if ship.upIsNormal then
---                                                             ship.rocket2Index + 1
---                                                         else
---                                                             ship.rocket1Index + 1
---                                             )
---                             in
---                             case direction of
---                                 Clockwise ->
---                                     if ship.upIsNormal then
---                                         Maybe.map2 Direction2d.angleFrom
---                                             (Util.Maybe.andThen2 Direction2d.from point1 point2)
---                                             (Util.Maybe.andThen2 Direction2d.from point1 point3)
---                                             |> Maybe.map Quantity.negate
---                                     else
---                                         Maybe.map2 Direction2d.angleFrom
---                                             (Util.Maybe.andThen2 Direction2d.from point2 point1)
---                                             (Util.Maybe.andThen2 Direction2d.from point2 point3)
---                                             |> Maybe.map Quantity.negate
---                                 CounterClockwise ->
---                                     if ship.upIsNormal then
---                                         Maybe.map2 Direction2d.angleFrom
---                                             (Util.Maybe.andThen2 Direction2d.from point2 point1)
---                                             (Util.Maybe.andThen2 Direction2d.from point2 point3)
---                                             |> Maybe.map Quantity.negate
---                                     else
---                                         Maybe.map2 Direction2d.angleFrom
---                                             (Util.Maybe.andThen2 Direction2d.from point1 point3)
---                                             (Util.Maybe.andThen2 Direction2d.from point1 point2)
---                         distanceToRotate =
---                             angle
---                                 |> Maybe.map (Quantity.divideBy rotateAnimationTime)
---                                 |> Maybe.withDefault (Angle.degrees 0)
---                                 |> (if remainingTime > 0 then
---                                         Quantity.multiplyBy (Duration.inMilliseconds deltaMs)
---                                     else
---                                         Quantity.multiplyBy travelTime
---                                    )
---                         newRocket1 =
---                             if (ship.upIsNormal && direction == CounterClockwise) || (not ship.upIsNormal && direction == Clockwise) then
---                                 Cylinder3d.rotateAround
---                                     (Cylinder3d.axis ship.rocket2)
---                                     distanceToRotate
---                                     ship.rocket1
---                             else
---                                 ship.rocket1
---                         newRocket2 =
---                             if (ship.upIsNormal && direction == Clockwise) || (not ship.upIsNormal && direction == CounterClockwise) then
---                                 Cylinder3d.rotateAround
---                                     (Cylinder3d.axis ship.rocket1)
---                                     distanceToRotate
---                                     ship.rocket2
---                             else
---                                 ship.rocket2
---                         newShip =
---                             { ship
---                                 | rocket1 = newRocket1
---                                 , rocket2 = newRocket2
---                                 , body =
---                                     let
---                                         bodyOffsetInterval =
---                                             Interval.from -0.125 0.125
---                                         a : Point3d Meters WorldCoordinates
---                                         a =
---                                             newRocket1
---                                                 |> Cylinder3d.centerPoint
---                                         b : Point3d Meters WorldCoordinates
---                                         b =
---                                             newRocket2
---                                                 |> Cylinder3d.centerPoint
---                                         frame3d =
---                                             LineSegment3d.from a b
---                                                 |> LineSegment3d.midpoint
---                                                 |> Frame3d.withXDirection
---                                                     (Direction3d.from a b
---                                                         |> Maybe.withDefault Direction3d.positiveX
---                                                     )
---                                     in
---                                     Block3d.centeredOn frame3d
---                                         ( Length.meters 0.25
---                                         , Length.meters 0.125
---                                         , Length.meters 1
---                                         )
---                                         |> Block3d.translateIn
---                                             (Frame3d.yDirection frame3d)
---                                             (max 0 remainingTime
---                                                 |> (\x ->
---                                                         if ship.upIsNormal then
---                                                             rotateAnimationTime - x
---                                                         else
---                                                             x
---                                                    )
---                                                 |> normalize 0 rotateAnimationTime
---                                                 |> Interval.interpolate bodyOffsetInterval
---                                                 |> Length.meters
---                                             )
---                             }
---                                 |> shipDoneRotating model.shape rotating direction remainingTime
---                     in
---                     { model | ship = newShip }
---          -- |> Util.Function.applyIf (rotating.shootOnComplete && remainingTime <= 0) shootLaser
---         )
--- shipDoneRotating : Shape WorldCoordinates -> RotatingDetails -> Direction -> Float -> Ship -> Ship
--- shipDoneRotating shape rotating direction remainingTime ship =
---     if remainingTime > 0 then
---         { ship
---             | rotating =
---                 Just { rotating | travelTime = remainingTime }
---         }
---     else
---         { ship
---             | rotating = Nothing
---             , upIsNormal = not ship.upIsNormal
---             , rocket1Index =
---                 case direction of
---                     Clockwise ->
---                         if ship.upIsNormal then
---                             ship.rocket1Index
---                         else
---                             (ship.rocket2Index - 1)
---                                 |> modBy (Shape.sideCount shape)
---                     CounterClockwise ->
---                         if ship.upIsNormal then
---                             (ship.rocket2Index + 1)
---                                 |> modBy (Shape.sideCount shape)
---                         else
---                             ship.rocket1Index
---             , rocket2Index =
---                 case direction of
---                     Clockwise ->
---                         if ship.upIsNormal then
---                             (ship.rocket1Index - 1)
---                                 |> modBy (Shape.sideCount shape)
---                         else
---                             ship.rocket2Index
---                     CounterClockwise ->
---                         if ship.upIsNormal then
---                             ship.rocket2Index
---                         else
---                             (ship.rocket1Index + 1)
---                                 |> modBy (Shape.sideCount shape)
---         }
+                            else if Set.member "ArrowLeft" model.keysDown then
+                                ship.rotationSpeed
+                                    |> Quantity.for deltaTime
+                                    |> Quantity.plus ship.rotation
+
+                            else
+                                ship.rotation
+                    }
+            }
+        )
+
+
+
 -- moveLasers : Float -> Update Model Msg -> Update Model Msg
 -- moveLasers deltaMs =
 --     Update.mapModel
@@ -851,14 +736,18 @@ view model =
 
             ( followPoint, _ ) =
                 model.ship.distance
-                    |> Quantity.minus (Length.meters 3)
+                    |> Quantity.minus (Length.meters 4)
                     |> CubicSpline3d.sampleAlong arcLengthParam
 
-            upDir =
+            sketchPlane =
                 SketchPlane3d.through followPoint
                     (Direction3d.from followPoint focalPoint
                         |> Maybe.withDefault Direction3d.positiveZ
                     )
+
+            upDir =
+                sketchPlane
+                    |> SketchPlane3d.rotateAround (SketchPlane3d.normalAxis sketchPlane) model.ship.rotation
                     |> SketchPlane3d.yDirection
                     |> Direction3d.reverse
         in
@@ -933,14 +822,18 @@ viewShip focalPoint path ship =
         ( center, normal ) =
             CubicSpline3d.sampleAlong arcLengthParam ship.distance
 
+        sketchPlane =
+            SketchPlane3d.through center normal
+
+        downDir =
+            sketchPlane
+                |> SketchPlane3d.yDirection
+
         shipFinal =
             ship.geometry
-                |> Block3d.placeIn
-                    (SketchPlane3d.through center normal
-                        |> SketchPlane3d.toFrame
-                    )
-
-        -- |> Block3d.translateIn zDir (Length.meters 0.75)
+                |> Block3d.placeIn (SketchPlane3d.toFrame sketchPlane)
+                |> Block3d.translateIn downDir (Length.meters 0.75)
+                |> Block3d.rotateAround (Axis3d.through center normal) ship.rotation
     in
     Scene3d.group
         [ shipFinal
@@ -957,16 +850,6 @@ viewShip focalPoint path ship =
 makeRailThingy : Cylinder3d Meters coordinates -> Scene3d.Entity coordinates
 makeRailThingy =
     Scene3d.cylinder (Scene3d.Material.matte Color.green)
-
-
-to2Points : List (Point2d Meters coordinates) -> ( Point2d Meters coordinates, Point2d Meters coordinates )
-to2Points points =
-    case points of
-        [ a, b ] ->
-            ( a, b )
-
-        _ ->
-            ( Point2d.origin, Point2d.origin )
 
 
 laserToGeometry : Laser -> Cylinder3d Meters WorldCoordinates
