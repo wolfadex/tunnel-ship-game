@@ -94,6 +94,7 @@ type alias Flags =
 init : Flags -> Update Model Msg
 init timeNow =
     let
+        initialShape : Shape WorldCoordinates
         initialShape =
             -- Shape.custom
             Shape.newRegular 5
@@ -130,9 +131,11 @@ init timeNow =
                 Err _ ->
                     carl initialPath
 
+        path : CubicSpline3d.Nondegenerate Meters WorldCoordinates
         path =
             carl initialPath
 
+        debugFlags : DebugFlags
         debugFlags =
             { tunnelVisible = Visible
             , trackPathVisible = Visible
@@ -164,21 +167,20 @@ init timeNow =
 createTrackGeometry : DebugFlags -> Shape coordinates -> CubicSpline3d.Nondegenerate Meters coordinates -> Scene3d.Entity coordinates
 createTrackGeometry debugFlags initialShape path =
     let
+        arcLength : Float
         arcLength =
-            CubicSpline3d.arcLengthParameterized
-                { maxError = Length.meters 0.01 }
-                path
+            path
+                |> CubicSpline3d.arcLengthParameterized { maxError = Length.meters 0.01 }
                 |> CubicSpline3d.arcLength
                 |> Length.inKilometers
 
-        segmentsInt : Int
-        segmentsInt =
-            (arcLength * 1500)
-                |> round
-
         segmentsFloat : Float
         segmentsFloat =
-            toFloat segmentsInt
+            arcLength * 1500
+
+        segmentsInt : Int
+        segmentsInt =
+            round segmentsFloat
     in
     [ viewIfVisible debugFlags.trackPathVisible
         [ createTrackPathGeometry path segmentsInt segmentsFloat ]
