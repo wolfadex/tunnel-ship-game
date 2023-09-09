@@ -180,32 +180,26 @@ createTrackGeometry debugFlags initialShape path =
         segmentsFloat =
             toFloat segmentsInt
     in
-    List.filterMap identity
-        [ case debugFlags.trackPathVisible of
-            Visible ->
-                createTrackPathGeometry path segmentsInt segmentsFloat
-                    |> Just
-
-            Hidden ->
-                Nothing
-        , case debugFlags.trackPathDownDirectionVisible of
-            Visible ->
-                createTrackDownGeometry path segmentsInt segmentsFloat
-                    |> Just
-
-            Hidden ->
-                Nothing
-        ]
-        |> List.append
-            (case debugFlags.tunnelVisible of
-                Visible ->
-                    List.range 0 segmentsInt
-                        |> List.map (\i -> viewTunnelRing initialShape path (toFloat i / segmentsFloat))
-
-                Hidden ->
-                    []
-            )
+    [ viewIfVisible debugFlags.trackPathVisible
+        [ createTrackPathGeometry path segmentsInt segmentsFloat ]
+    , viewIfVisible debugFlags.trackPathDownDirectionVisible
+        [ createTrackDownGeometry path segmentsInt segmentsFloat ]
+    , List.range 0 segmentsInt
+        |> List.map (\i -> viewTunnelRing initialShape path (toFloat i / segmentsFloat))
+        |> viewIfVisible debugFlags.tunnelVisible
+    ]
+        |> List.concatMap identity
         |> Scene3d.group
+
+
+viewIfVisible : Visible -> List (Scene3d.Entity coordinates) -> List (Scene3d.Entity coordinates)
+viewIfVisible visible entities =
+    case visible of
+        Visible ->
+            entities
+
+        Hidden ->
+            []
 
 
 createTrackPathGeometry : CubicSpline3d.Nondegenerate Meters coordinates -> Int -> Float -> Scene3d.Entity coordinates
