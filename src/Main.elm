@@ -412,101 +412,9 @@ tick : Duration -> Model -> Update Model Msg
 tick deltaTime model =
     model
         |> Update.save
-        |> applyKeys
         |> rotateShip deltaTime
+        -- |> moveEnemies deltaTime
         |> moveShip deltaTime
-
-
-
--- |> moveLasers deltaTime
--- |> spawnEnemy deltaTime
--- |> killEnemies
--- |> moveEnemies deltaTime
--- |> moveTunnel deltaTime
-
-
-applyKeys : Update Model Msg -> Update Model Msg
-applyKeys =
-    let
-        applyKey model key msg =
-            Util.Function.applyIf (Set.member key model.keysDown) msg
-    in
-    Update.andThen
-        (\model ->
-            model
-                |> Update.save
-         -- |> applyKey model " " (Update.withMsg Shoot)
-         -- |> applyKey model "ArrowLeft" (Update.withMsg (Move Clockwise))
-         -- |> applyKey model "ArrowRight" (Update.withMsg (Move CounterClockwise))
-        )
-
-
-checkLaserCollisions :
-    { enemies : List Enemy
-    , lasers : List Laser
-    }
-    ->
-        { enemies : List Enemy
-        , lasers : List Laser
-        , destroyedEnemies : List Enemy
-        }
-checkLaserCollisions input =
-    let
-        helper :
-            List Laser
-            -> { enemies : List Enemy, lasers : List Laser, destroyedEnemies : List Enemy }
-            -> { enemies : List Enemy, lasers : List Laser, destroyedEnemies : List Enemy }
-        helper lasers output =
-            case lasers of
-                [] ->
-                    output
-
-                nextLaser :: remainingLasers ->
-                    let
-                        ( maybeEnemy, restEnemies ) =
-                            Util.List.extractIf
-                                (\enemy ->
-                                    BoundingBox3d.intersects
-                                        (enemy
-                                            |> enemyToGeometry
-                                            |> Cylinder3d.boundingBox
-                                        )
-                                        (nextLaser
-                                            |> laserToGeometry
-                                            |> Cylinder3d.boundingBox
-                                        )
-                                )
-                                output.enemies
-                    in
-                    case maybeEnemy of
-                        Nothing ->
-                            helper remainingLasers
-                                { output
-                                    | lasers = nextLaser :: output.lasers
-                                }
-
-                        Just enemy ->
-                            helper remainingLasers
-                                { output
-                                    | enemies = restEnemies
-                                    , destroyedEnemies = enemy :: output.destroyedEnemies
-                                }
-    in
-    helper
-        input.lasers
-        { enemies = input.enemies
-        , lasers = []
-        , destroyedEnemies = []
-        }
-
-
-
--- shootLaser : Model -> Model
--- shootLaser model =
---     { model
---         | lasers =
---             Block3d.centerPoint model.ship.body :: model.lasers
---     }
 
 
 moveShip : Duration -> Update Model Msg -> Update Model Msg
@@ -574,36 +482,6 @@ rotateShip deltaTime =
                     }
             }
         )
-
-
-
--- moveLasers : Float -> Update Model Msg -> Update Model Msg
--- moveLasers deltaMs =
---     Update.mapModel
---         (\model ->
---             { model
---                 | lasers = List.filterMap (moveLaser deltaMs) model.lasers
---             }
---         )
--- moveLaser : Float -> Point3d Meters WorldCoordinates -> Maybe (Point3d Meters WorldCoordinates)
--- moveLaser deltaMs point =
---     let
---         newPoint =
---             Point3d.translateIn Direction3d.positiveY (Length.meters (deltaMs * 0.1)) point
---     in
---     if Point3d.yCoordinate newPoint |> Quantity.greaterThan (Length.meters 70) then
---         Nothing
---     else
---         Just newPoint
-
-
-rotateAnimationTime =
-    150
-
-
-normalize : Float -> Float -> Float -> Float
-normalize minValue maxValue x =
-    (x - minValue) / (maxValue - minValue)
 
 
 view : Model -> Browser.Document Msg
