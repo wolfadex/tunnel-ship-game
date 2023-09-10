@@ -8,6 +8,7 @@ import Browser
 import Browser.Events
 import Camera3d
 import Color
+import Coordinates
 import CubicSpline3d exposing (CubicSpline3d)
 import Cylinder3d exposing (Cylinder3d)
 import Direction3d exposing (Direction3d)
@@ -32,6 +33,7 @@ import Shape exposing (Shape)
 import SketchPlane3d exposing (SketchPlane3d)
 import Speed exposing (Speed)
 import Time
+import Track exposing (Track)
 import Update exposing (Update)
 import Vector3d exposing (Vector3d)
 import Viewpoint3d
@@ -45,13 +47,6 @@ type alias Model =
     , keysDown : Set String
     , track : Track
     , lastTickTime : Time.Posix
-    }
-
-
-type alias Track =
-    { shape : Shape WorldCoordinates
-    , path : CubicSpline3d.Nondegenerate Meters WorldCoordinates
-    , geometry : Scene3d.Entity WorldCoordinates
     }
 
 
@@ -197,53 +192,7 @@ init timeNow =
     -- ]
     , seed = Random.initialSeed 0
     , keysDown = Set.empty
-    , track =
-        { shape = initialShape
-        , path = path
-        , geometry =
-            let
-                segments =
-                    100
-            in
-            List.range 1 segments
-                |> List.map (\i -> viewTunnelRing initialShape path (toFloat i / segments))
-                -- DEBUG BELOW
-                |> List.append
-                    [ List.range 1 100
-                        |> List.map
-                            (\i ->
-                                let
-                                    ( p, dir ) =
-                                        CubicSpline3d.sample path (toFloat i / segments)
-                                in
-                                LineSegment3d.from p
-                                    (p
-                                        |> Point3d.translateIn dir (Length.meters 1)
-                                    )
-                            )
-                        |> Scene3d.Mesh.lineSegments
-                        |> Scene3d.mesh (Scene3d.Material.color Color.red)
-                    , List.range 1 100
-                        |> List.map
-                            (\i ->
-                                let
-                                    ( p, _ ) =
-                                        CubicSpline3d.sample path (toFloat i / segments)
-
-                                    dir =
-                                        sketchPlaneAt path (toFloat i / segments)
-                                            |> SketchPlane3d.yDirection
-                                in
-                                LineSegment3d.from p
-                                    (p
-                                        |> Point3d.translateIn dir (Length.meters 1)
-                                    )
-                            )
-                        |> Scene3d.Mesh.lineSegments
-                        |> Scene3d.mesh (Scene3d.Material.color Color.green)
-                    ]
-                |> Scene3d.group
-        }
+    , track = Track.init initialShape (Debug.todo "")
     , lastTickTime = Time.millisToPosix (round timeNow)
     }
         |> Update.save
@@ -391,10 +340,7 @@ moveShip deltaTime =
                         |> Quantity.plus ship.distance
 
                 lengthOfTrack =
-                    CubicSpline3d.arcLengthParameterized
-                        { maxError = Length.meters 0.01 }
-                        model.track.path
-                        |> CubicSpline3d.arcLength
+                    Track.length model.track
             in
             { model
                 | ship =
