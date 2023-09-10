@@ -10,8 +10,10 @@ import Browser.Events
 import Camera3d exposing (Camera3d)
 import Circle2d
 import Color
+import Coordinates
 import CubicSpline3d exposing (CubicSpline3d)
 import Cylinder3d exposing (Cylinder3d)
+import DebugFlags exposing (DebugFlags)
 import Direction2d
 import Direction3d exposing (Direction3d)
 import Duration exposing (Duration)
@@ -46,12 +48,14 @@ import Svg exposing (Svg)
 import Svg.Attributes
 import Svg.Events
 import Time
+import Track exposing (Track)
 import Update exposing (Update)
 import Util.Debug
 import Util.Function
 import Vector2d
 import Vector3d exposing (Vector3d)
 import Viewpoint3d exposing (Viewpoint3d)
+import Visible exposing (Visible)
 
 
 type alias Model =
@@ -61,7 +65,7 @@ type alias Model =
     , track : Track
     , camera : EditorCamera
     , debugFlags : DebugFlags
-    , movingControlPoint : Maybe ActiveControlPoint
+    , movingControlPoint : Maybe Track.ActiveControlPoint
     }
 
 
@@ -72,42 +76,10 @@ type alias Modifiers =
     }
 
 
-type alias ActiveControlPoint =
-    { pointerId : Json.Decode.Value
-    , index : Int
-    , point : Point2d Pixels ScreenSpace
-    , direction : Direction3d WorldCoordinates
-    , plane : Plane3d Meters WorldCoordinates
-    }
-
-
-type alias DebugFlags =
-    { tunnelVisible : Visible
-    , trackPathVisible : Visible
-    , trackPathDownDirectionVisible : Visible
-    }
-
-
 type alias EditorCamera =
-    { center : Point3d Meters WorldCoordinates
-    , forward : Direction3d WorldCoordinates
+    { center : Point3d Meters Coordinates.World
+    , forward : Direction3d Coordinates.World
     }
-
-
-type alias Track =
-    { shape : Shape WorldCoordinates
-    , path : CubicSpline3d.Nondegenerate Meters WorldCoordinates
-    , geometry : Scene3d.Entity WorldCoordinates
-    }
-
-
-type WorldCoordinates
-    = WorldCoordinates Never
-
-
-type Visible
-    = Visible
-    | Hidden
 
 
 type alias Flags =
@@ -117,7 +89,7 @@ type alias Flags =
 init : Flags -> Update Model Msg
 init timeNow =
     let
-        initialShape : Shape WorldCoordinates
+        initialShape : Shape Coordinates.World
         initialShape =
             -- Shape.custom
             Shape.newRegular 5
@@ -145,15 +117,15 @@ init timeNow =
                     (Length.meters 0)
                 )
 
-        path : CubicSpline3d.Nondegenerate Meters WorldCoordinates
+        path : CubicSpline3d.Nondegenerate Meters Coordinates.World
         path =
             carlPath initialPath
 
         debugFlags : DebugFlags
         debugFlags =
-            { tunnelVisible = Visible
-            , trackPathVisible = Visible
-            , trackPathDownDirectionVisible = Visible
+            { tunnelVisible = Visible.Visible
+            , trackPathVisible = Visible.Visible
+            , trackPathDownDirectionVisible = Visible.Visible
             }
     in
     { keysDown = Set.empty
@@ -169,11 +141,7 @@ init timeNow =
                 |> Direction3d.from center
                 |> Maybe.withDefault Direction3d.positiveX
         }
-    , track =
-        { shape = initialShape
-        , path = path
-        , geometry = createTrackGeometry debugFlags initialShape path
-        }
+    , track = Track.init initialShape debugFlags
     , debugFlags = debugFlags
     , movingControlPoint = Nothing
     , lastTickTime = Time.millisToPosix (round timeNow)
@@ -181,7 +149,7 @@ init timeNow =
         |> Update.save
 
 
-carlPath : CubicSpline3d Meters WorldCoordinates -> CubicSpline3d.Nondegenerate Meters WorldCoordinates
+carlPath : CubicSpline3d Meters Coordinates.World -> CubicSpline3d.Nondegenerate Meters Coordinates.World
 carlPath a =
     case CubicSpline3d.nondegenerate a of
         Ok p ->
@@ -193,46 +161,6 @@ carlPath a =
                     Debug.log "Error in carlPath" err
             in
             carlPath a
-
-
-createTrackGeometry : DebugFlags -> Shape coordinates -> CubicSpline3d.Nondegenerate Meters coordinates -> Scene3d.Entity coordinates
-createTrackGeometry debugFlags initialShape path =
-    let
-        arcLength : Float
-        arcLength =
-            path
-                |> CubicSpline3d.arcLengthParameterized { maxError = Length.meters 0.01 }
-                |> CubicSpline3d.arcLength
-                |> Length.inKilometers
-
-        segmentsFloat : Float
-        segmentsFloat =
-            arcLength * 1500
-
-        segmentsInt : Int
-        segmentsInt =
-            round segmentsFloat
-    in
-    [ viewIfVisible debugFlags.trackPathVisible
-        [ createTrackPathGeometry path segmentsInt segmentsFloat ]
-    , viewIfVisible debugFlags.trackPathDownDirectionVisible
-        [ createTrackDownGeometry path segmentsInt segmentsFloat ]
-    , List.range 0 segmentsInt
-        |> List.map (\i -> viewTunnelRing initialShape path (toFloat i / segmentsFloat))
-        |> viewIfVisible debugFlags.tunnelVisible
-    ]
-        |> List.concatMap identity
-        |> Scene3d.group
-
-
-viewIfVisible : Visible -> List (Scene3d.Entity coordinates) -> List (Scene3d.Entity coordinates)
-viewIfVisible visible entities =
-    case visible of
-        Visible ->
-            entities
-
-        Hidden ->
-            []
 
 
 createTrackPathGeometry : CubicSpline3d.Nondegenerate Meters coordinates -> Int -> Float -> Scene3d.Entity coordinates
@@ -365,8 +293,8 @@ type Msg
     | DebugTrackPathToggled Visible
     | DebugTrackPathDownDirectionToggled Visible
     | DebugTunnelToggled Visible
-    | PointerDown ActiveControlPoint
-    | PointerMove Int (Point2d Pixels ScreenSpace)
+    | PointerDown Track.ActiveControlPoint
+    | PointerMove Int (Point2d Pixels Coordinates.Screen)
     | PointerUp Int
 
 
@@ -455,7 +383,7 @@ update msg model =
                                 , height = 600
                                 }
 
-                            camera : Camera3d Meters WorldCoordinates
+                            camera : Camera3d Meters Coordinates.World
                             camera =
                                 Camera3d.perspective
                                     { viewpoint =
@@ -469,74 +397,24 @@ update msg model =
                                     , verticalFieldOfView = Angle.degrees 30
                                     }
 
-                            screenRectangle : Rectangle2d Pixels ScreenSpace
+                            screenRectangle : Rectangle2d Pixels Coordinates.Screen
                             screenRectangle =
                                 Point2d.pixels viewSize.width 0
                                     |> Rectangle2d.from (Point2d.pixels 0 viewSize.height)
 
-                            newControlPoint : Int -> Point3d Meters WorldCoordinates
-                            newControlPoint i =
-                                let
-                                    oldControlPoint =
-                                        model.track.path
-                                            |> CubicSpline3d.fromNondegenerate
-                                            |> (case i of
-                                                    0 ->
-                                                        CubicSpline3d.firstControlPoint
-
-                                                    1 ->
-                                                        CubicSpline3d.secondControlPoint
-
-                                                    2 ->
-                                                        CubicSpline3d.thirdControlPoint
-
-                                                    3 ->
-                                                        CubicSpline3d.fourthControlPoint
-
-                                                    _ ->
-                                                        let
-                                                            _ =
-                                                                Debug.log "Invalid control point index" i
-                                                        in
-                                                        CubicSpline3d.firstControlPoint
-                                               )
-
-                                    axis =
-                                        Axis3d.through oldControlPoint movingControlPoint.direction
-                                in
-                                if movingControlPoint.index == i then
-                                    point
-                                        |> Camera3d.ray camera screenRectangle
-                                        |> Axis3d.intersectionWithPlane movingControlPoint.plane
-                                        |> Maybe.map (Point3d.projectOntoAxis axis)
-                                        |> Maybe.withDefault oldControlPoint
-
-                                else
-                                    oldControlPoint
-
-                            track =
-                                model.track
-
-                            newPath =
-                                carlPath
-                                    (CubicSpline3d.fromControlPoints
-                                        (newControlPoint 0)
-                                        (newControlPoint 1)
-                                        (newControlPoint 2)
-                                        (newControlPoint 3)
-                                    )
+                            newMovingControlPoint =
+                                { movingControlPoint | point = point }
                         in
                         { model
-                            | movingControlPoint =
-                                Just
-                                    { movingControlPoint
-                                        | point = point
-                                    }
+                            | movingControlPoint = Just newMovingControlPoint
                             , track =
-                                { track
-                                    | path = newPath
-                                    , geometry = createTrackGeometry model.debugFlags track.shape newPath
-                                }
+                                Track.moveControlPoint
+                                    { debugFlags = model.debugFlags
+                                    , movingControlPoint = newMovingControlPoint
+                                    , camera = camera
+                                    , screenRectangle = screenRectangle
+                                    }
+                                    model.track
                         }
                             |> Update.save
 
@@ -551,15 +429,8 @@ update msg model =
 
 redrawTrackGeometry : Model -> Model
 redrawTrackGeometry model =
-    let
-        track =
-            model.track
-    in
     { model
-        | track =
-            { track
-                | geometry = createTrackGeometry model.debugFlags track.shape track.path
-            }
+        | track = Track.newDebugFlags model.debugFlags model.track
     }
 
 
@@ -590,7 +461,7 @@ moveCamera deltaTime =
                     { camera
                         | center =
                             let
-                                xDir : Direction3d WorldCoordinates
+                                xDir : Direction3d Coordinates.World
                                 xDir =
                                     Viewpoint3d.lookAt
                                         { eyePoint = model.camera.center
@@ -601,7 +472,7 @@ moveCamera deltaTime =
                                         }
                                         |> Viewpoint3d.xDirection
 
-                                yDir : Direction3d WorldCoordinates
+                                yDir : Direction3d Coordinates.World
                                 yDir =
                                     Viewpoint3d.lookAt
                                         { eyePoint = model.camera.center
@@ -698,7 +569,7 @@ applyEvent event model =
                     { camera
                         | forward =
                             let
-                                xAxis : Axis3d Meters WorldCoordinates
+                                xAxis : Axis3d Meters Coordinates.World
                                 xAxis =
                                     Viewpoint3d.lookAt
                                         { eyePoint = model.camera.center
@@ -710,7 +581,7 @@ applyEvent event model =
                                         |> Viewpoint3d.xDirection
                                         |> Axis3d.through model.camera.center
 
-                                yAxis : Axis3d Meters WorldCoordinates
+                                yAxis : Axis3d Meters Coordinates.World
                                 yAxis =
                                     Direction3d.positiveZ
                                         |> Axis3d.through model.camera.center
@@ -732,7 +603,7 @@ view model =
             , height = 600
             }
 
-        camera : Camera3d Meters WorldCoordinates
+        camera : Camera3d Meters Coordinates.World
         camera =
             Camera3d.perspective
                 { viewpoint =
@@ -753,7 +624,7 @@ view model =
         , clipDepth = Length.millimeters 0.1
         , background = Scene3d.backgroundColor Color.black
         , entities =
-            [ model.track.geometry
+            [ Track.view model.track
             , LineSegment3d.from
                 Point3d.origin
                 (Point3d.origin
@@ -779,9 +650,7 @@ view model =
     , Html.div
         []
         [ Html.span [ Html.Attributes.class "score" ]
-            [ ((model.track.path
-                    |> CubicSpline3d.arcLengthParameterized { maxError = Length.meters 0.01 }
-                    |> CubicSpline3d.arcLength
+            [ ((Track.length model.track
                     |> Length.inKilometers
                     |> Numeral.format "0,0.000"
                )
@@ -794,301 +663,29 @@ view model =
         [ Html.Attributes.style "display" "flex"
         , Html.Attributes.style "flex-direction" "column"
         ]
-        [ viewVisible
+        [ Visible.view
             { label = "Track path visible"
             , value = model.debugFlags.trackPathVisible
             , onChange = DebugTrackPathToggled
             }
-        , viewVisible
+        , Visible.view
             { label = "Track path down direction visible"
             , value = model.debugFlags.trackPathDownDirectionVisible
             , onChange = DebugTrackPathDownDirectionToggled
             }
-        , viewVisible
+        , Visible.view
             { label = "Tunnel visible"
             , value = model.debugFlags.tunnelVisible
             , onChange = DebugTunnelToggled
             }
         ]
-    , viewControlPoints
-        viewSize
-        camera
-        model.movingControlPoint
-        model.track.path
+    , Track.viewControlPoints
+        { viewSize = viewSize
+        , camera = camera
+        , movingControlPoint = model.movingControlPoint
+        , onPointerDown = PointerDown
+        , onPointerMove = PointerMove
+        , onPointerUp = PointerUp
+        }
+        model.track
     ]
-
-
-type ScreenSpace
-    = ScreenSpace Never
-
-
-viewControlPoints :
-    { width : Float, height : Float }
-    -> Camera3d Meters WorldCoordinates
-    -> Maybe ActiveControlPoint
-    -> CubicSpline3d.Nondegenerate Meters WorldCoordinates
-    -> Html Msg
-viewControlPoints viewSize camera movingControlPoint spline =
-    let
-        -- Take the 3D model for the logo and rotate it by the current angle
-        -- rotatedLogo =
-        --     blockEntity |> Scene3d.rotateAround Axis3d.z angle
-        -- Defines the shape of the 'screen' that we will be using when
-        --
-        -- projecting 3D points into 2D
-        screenRectangle : Rectangle2d Pixels ScreenSpace
-        screenRectangle =
-            Point2d.pixels viewSize.width viewSize.height
-                |> Rectangle2d.from Point2d.origin
-
-        -- Take all vertices of the logo shape, rotate them the same amount as
-        -- the logo itself and then project them into 2D screen space
-        controlPoints :
-            List
-                { center : Point2d Pixels ScreenSpace
-                , point : Point3d Meters WorldCoordinates
-                , xSegment : LineSegment2d Pixels ScreenSpace
-                , ySegment : LineSegment2d Pixels ScreenSpace
-                , zSegment : LineSegment2d Pixels ScreenSpace
-                }
-        controlPoints =
-            List.map
-                (\p ->
-                    { center = Point3d.Projection.toScreenSpace camera screenRectangle p.point
-                    , point = p.point
-                    , xSegment =
-                        LineSegment2d.from
-                            (Point3d.Projection.toScreenSpace camera screenRectangle p.point)
-                            (Point3d.Projection.toScreenSpace camera screenRectangle p.xEndpoint)
-                    , ySegment =
-                        LineSegment2d.from
-                            (Point3d.Projection.toScreenSpace camera screenRectangle p.point)
-                            (Point3d.Projection.toScreenSpace camera screenRectangle p.yEndpoint)
-                    , zSegment =
-                        LineSegment2d.from
-                            (Point3d.Projection.toScreenSpace camera screenRectangle p.point)
-                            (Point3d.Projection.toScreenSpace camera screenRectangle p.zEndpoint)
-                    }
-                )
-                [ let
-                    point =
-                        spline
-                            |> CubicSpline3d.fromNondegenerate
-                            |> CubicSpline3d.firstControlPoint
-                  in
-                  { point = point
-                  , xEndpoint = Point3d.translateIn Direction3d.positiveX (Length.meters 1) point
-                  , yEndpoint = Point3d.translateIn Direction3d.positiveY (Length.meters 1) point
-                  , zEndpoint = Point3d.translateIn Direction3d.positiveZ (Length.meters 1) point
-                  }
-                , let
-                    point =
-                        spline
-                            |> CubicSpline3d.fromNondegenerate
-                            |> CubicSpline3d.secondControlPoint
-                  in
-                  { point = point
-                  , xEndpoint = Point3d.translateIn Direction3d.positiveX (Length.meters 1) point
-                  , yEndpoint = Point3d.translateIn Direction3d.positiveY (Length.meters 1) point
-                  , zEndpoint = Point3d.translateIn Direction3d.positiveZ (Length.meters 1) point
-                  }
-                , let
-                    point =
-                        spline
-                            |> CubicSpline3d.fromNondegenerate
-                            |> CubicSpline3d.thirdControlPoint
-                  in
-                  { point = point
-                  , xEndpoint = Point3d.translateIn Direction3d.positiveX (Length.meters 1) point
-                  , yEndpoint = Point3d.translateIn Direction3d.positiveY (Length.meters 1) point
-                  , zEndpoint = Point3d.translateIn Direction3d.positiveZ (Length.meters 1) point
-                  }
-                , let
-                    point =
-                        spline
-                            |> CubicSpline3d.fromNondegenerate
-                            |> CubicSpline3d.fourthControlPoint
-                  in
-                  { point = point
-                  , xEndpoint = Point3d.translateIn Direction3d.positiveX (Length.meters 1) point
-                  , yEndpoint = Point3d.translateIn Direction3d.positiveY (Length.meters 1) point
-                  , zEndpoint = Point3d.translateIn Direction3d.positiveZ (Length.meters 1) point
-                  }
-                ]
-
-        viewControlPointDirSegment : String -> Int -> Plane3d Meters WorldCoordinates -> Direction3d WorldCoordinates -> LineSegment2d Pixels ScreenSpace -> Svg Msg
-        viewControlPointDirSegment color index plane dir segment =
-            Geometry.Svg.lineSegment2d
-                ([ Svg.Attributes.stroke color
-                 , Svg.Attributes.strokeWidth "4"
-                 , Svg.Attributes.class "track-editor-control-point-dir"
-
-                 -- TODO
-                 -- ([ Svg.Attributes.pointerEvents "all"
-                 , Svg.Events.on "pointerdown" (decodePointerDown index plane dir)
-                 , Svg.Events.on "pointerup" (decodePointerUp index)
-
-                 -- , Svg.Events.on "keydown" (decodeKeyDown index)
-                 -- ]
-                 -- )
-                 ]
-                    ++ (case movingControlPoint of
-                            Just details ->
-                                if details.index == index then
-                                    [ Svg.Attributes.style "cursor: grab"
-                                    , Html.Attributes.property "___capturePointer" details.pointerId
-                                    , Svg.Events.on "pointermove" (decodePointerMove index)
-                                    ]
-
-                                else
-                                    []
-
-                            Nothing ->
-                                []
-                       )
-                )
-                segment
-
-        controlPointSvgs : Svg Msg
-        controlPointSvgs =
-            List.indexedMap
-                (\index controlPoint ->
-                    Svg.g
-                        [ Svg.Attributes.class "track-editor-control-point"
-                        ]
-                        [ viewControlPointDirSegment
-                            "red"
-                            index
-                            (Plane3d.through controlPoint.point Direction3d.positiveZ)
-                            Direction3d.positiveX
-                            controlPoint.xSegment
-                        , viewControlPointDirSegment
-                            "green"
-                            index
-                            (Plane3d.through controlPoint.point Direction3d.positiveZ)
-                            Direction3d.positiveY
-                            controlPoint.ySegment
-                        , viewControlPointDirSegment
-                            "blue"
-                            index
-                            (Plane3d.through controlPoint.point Direction3d.positiveX)
-                            Direction3d.positiveZ
-                            controlPoint.zSegment
-                        , Geometry.Svg.circle2d
-                            [ Svg.Attributes.stroke "rgb(200, 255, 200)"
-                            , Svg.Attributes.strokeWidth "2"
-                            , Svg.Attributes.fill "rgba(0, 0, 0, 0)"
-                            , Html.Attributes.attribute "tabindex" "0"
-                            ]
-                            (Circle2d.withRadius (Pixels.float 6) controlPoint.center)
-                        ]
-                )
-                controlPoints
-                |> Svg.g []
-                |> Geometry.Svg.relativeTo topLeftFrame
-
-        segmentSvgs : Svg.Svg msg
-        segmentSvgs =
-            List.foldl
-                (\controlPoint acc ->
-                    case acc of
-                        Nothing ->
-                            Just ( controlPoint.center, [] )
-
-                        Just ( previousControlPoint, segments ) ->
-                            Just
-                                ( controlPoint.center
-                                , Geometry.Svg.lineSegment2d
-                                    [ Svg.Attributes.stroke "red"
-                                    , Svg.Attributes.strokeWidth "0.5"
-                                    , Svg.Attributes.strokeDasharray "5 5"
-                                    , Svg.Attributes.class "track-editor-label-ignore"
-                                    ]
-                                    (LineSegment2d.from previousControlPoint controlPoint.center)
-                                    :: segments
-                                )
-                )
-                Nothing
-                controlPoints
-                |> Maybe.map Tuple.second
-                |> Maybe.withDefault []
-                |> Svg.g []
-                |> Geometry.Svg.relativeTo topLeftFrame
-
-        -- Used for converting from coordinates relative to the bottom-left
-        -- corner of the 2D drawing into coordinates relative to the top-left
-        -- corner (which is what SVG natively works in)
-        topLeftFrame : Frame2d Pixels coordinates defines2
-        topLeftFrame =
-            Frame2d.reverseY (Frame2d.atPoint (Point2d.xy Quantity.zero (Pixels.float viewSize.height)))
-    in
-    -- Create an SVG element with the projected points, lines and associated labels
-    Svg.svg
-        [ Html.Attributes.width (floor viewSize.width)
-        , Html.Attributes.height (floor viewSize.height)
-        , Svg.Attributes.class "track-editor-svg"
-        ]
-        [ controlPointSvgs
-        , segmentSvgs
-        ]
-
-
-decodePointerDown : Int -> Plane3d Meters WorldCoordinates -> Direction3d WorldCoordinates -> Json.Decode.Decoder Msg
-decodePointerDown index plane dir =
-    Json.Decode.map3
-        (\pointerId x y ->
-            PointerDown
-                { index = index
-                , direction = dir
-                , pointerId = pointerId
-                , point = Point2d.pixels x y
-                , plane = plane
-                }
-        )
-        (Json.Decode.field "pointerId" Json.Decode.value)
-        (Json.Decode.field "clientX" Json.Decode.float)
-        (Json.Decode.field "clientY" Json.Decode.float)
-
-
-decodePointerUp : Int -> Json.Decode.Decoder Msg
-decodePointerUp index =
-    Json.Decode.succeed (PointerUp index)
-
-
-decodePointerMove : Int -> Json.Decode.Decoder Msg
-decodePointerMove index =
-    Json.Decode.map2
-        (\x y ->
-            PointerMove
-                index
-                (Point2d.pixels x y)
-        )
-        (Json.Decode.at [ "clientX" ] Json.Decode.float)
-        (Json.Decode.at [ "clientY" ] Json.Decode.float)
-
-
-viewVisible : { label : String, onChange : Visible -> Msg, value : Visible } -> Html Msg
-viewVisible { onChange, value, label } =
-    Html.label []
-        [ Html.text label
-        , Html.input
-            [ Html.Attributes.type_ "checkbox"
-            , Html.Attributes.checked <|
-                case value of
-                    Visible ->
-                        True
-
-                    Hidden ->
-                        False
-            , Html.Events.onCheck
-                (\isChecked ->
-                    onChange <|
-                        if isChecked then
-                            Visible
-
-                        else
-                            Hidden
-                )
-            ]
-            []
-        ]
