@@ -56,10 +56,19 @@ import Viewpoint3d exposing (Viewpoint3d)
 
 type alias Model =
     { keysDown : Set String
+    , modifiersDown : Modifiers
+    , lastTickTime : Time.Posix
     , track : Track
     , camera : EditorCamera
     , debugFlags : DebugFlags
     , movingControlPoint : Maybe ActiveControlPoint
+    }
+
+
+type alias Modifiers =
+    { shift : Bool
+    , ctrl : Bool
+    , alt : Bool
     }
 
 
@@ -148,6 +157,7 @@ init timeNow =
             }
     in
     { keysDown = Set.empty
+    , modifiersDown = { shift = False, ctrl = False, alt = False }
     , camera =
         let
             center =
@@ -166,6 +176,7 @@ init timeNow =
         }
     , debugFlags = debugFlags
     , movingControlPoint = Nothing
+    , lastTickTime = Time.millisToPosix (round timeNow)
     }
         |> Update.save
 
@@ -306,9 +317,10 @@ viewTunnelVertConnectors point =
 subscriptions : Model -> Sub Msg
 subscriptions model =
     Sub.batch
-        [ Browser.Events.onKeyDown decodeKeyDown
+        [ Browser.Events.onAnimationFrame AnimationFrame
+        , Browser.Events.onKeyDown decodeKeyDown
         , Browser.Events.onKeyUp decodeKeyUp
-        , if Set.member "Alt" model.keysDown then
+        , if model.modifiersDown.alt then
             Browser.Events.onMouseMove decodeMouseMove
 
           else
@@ -373,13 +385,13 @@ update : Msg -> Model -> Update Model Msg
 update msg model =
     case msg of
         AnimationFrame timestamp ->
-            model
-                |> Update.save
+            { model | lastTickTime = timestamp }
+                |> tick (timeDelta model timestamp)
 
         Event timestamp event ->
             model
                 |> applyEvent event
-                |> Update.save
+                |> tick (timeDelta model timestamp)
 
         DebugTrackPathToggled visible ->
             let
@@ -551,17 +563,30 @@ redrawTrackGeometry model =
     }
 
 
-applyEvent : Event -> Model -> Model
-applyEvent event model =
-    case event of
-        KeyDown key ->
+timeDelta : Model -> Time.Posix -> Duration
+timeDelta model timestamp =
+    (Time.posixToMillis timestamp - Time.posixToMillis model.lastTickTime)
+        |> toFloat
+        |> Duration.milliseconds
+
+
+tick : Duration -> Model -> Update Model Msg
+tick deltaTime model =
+    model
+        |> Update.save
+        |> moveCamera deltaTime
+
+
+moveCamera : Duration -> Update Model Msg -> Update Model Msg
+moveCamera deltaTime =
+    Update.mapModel
+        (\model ->
             let
                 camera =
                     model.camera
             in
             { model
-                | keysDown = Set.insert key model.keysDown
-                , camera =
+                | camera =
                     { camera
                         | center =
                             let
@@ -586,27 +611,81 @@ applyEvent event model =
                                         , upDirection = Direction3d.positiveZ
                                         }
                                         |> Viewpoint3d.yDirection
+
+                                distance : Length
+                                distance =
+                                    Speed.metersPerSecond 5
+                                        |> Quantity.for deltaTime
+                                        |> Util.Function.applyIf model.modifiersDown.shift
+                                            (Quantity.multiplyBy 2)
                             in
                             camera.center
                                 -- Forward
-                                |> Util.Function.applyIf (String.toLower key == "w")
-                                    (Point3d.translateIn camera.forward (Length.meters 0.1))
+                                |> Util.Function.applyIf (Set.member "W" model.keysDown)
+                                    (Point3d.translateIn camera.forward distance)
                                 -- Backward
-                                |> Util.Function.applyIf (String.toLower key == "s")
-                                    (Point3d.translateIn camera.forward (Length.meters -0.1))
+                                |> Util.Function.applyIf (Set.member "S" model.keysDown)
+                                    (Point3d.translateIn camera.forward (Quantity.negate distance))
                                 -- Right
-                                |> Util.Function.applyIf (String.toLower key == "d")
-                                    (Point3d.translateIn xDir (Length.meters 0.1))
+                                |> Util.Function.applyIf (Set.member "D" model.keysDown)
+                                    (Point3d.translateIn xDir distance)
                                 -- Left
-                                |> Util.Function.applyIf (String.toLower key == "a")
-                                    (Point3d.translateIn xDir (Length.meters -0.1))
+                                |> Util.Function.applyIf (Set.member "A" model.keysDown)
+                                    (Point3d.translateIn xDir (Quantity.negate distance))
                                 -- Up
-                                |> Util.Function.applyIf (String.toLower key == "e")
-                                    (Point3d.translateIn yDir (Length.meters 0.1))
+                                |> Util.Function.applyIf (Set.member "E" model.keysDown)
+                                    (Point3d.translateIn yDir distance)
                                 -- Down
-                                |> Util.Function.applyIf (String.toLower key == "q")
-                                    (Point3d.translateIn yDir (Length.meters -0.1))
+                                |> Util.Function.applyIf (Set.member "Q" model.keysDown)
+                                    (Point3d.translateIn yDir (Quantity.negate distance))
                     }
+            }
+        )
+
+
+applyEvent : Event -> Model -> Model
+applyEvent event model =
+    case event of
+        KeyDown key ->
+            let
+                modifiersDown =
+                    model.modifiersDown
+            in
+            { model
+                | keysDown = Set.insert (String.toUpper key) model.keysDown
+                , modifiersDown =
+                    if key == "Shift" then
+                        { modifiersDown | shift = True }
+
+                    else if key == "Control" then
+                        { modifiersDown | ctrl = True }
+
+                    else if key == "Alt" then
+                        { modifiersDown | alt = True }
+
+                    else
+                        modifiersDown
+            }
+
+        KeyUp key ->
+            let
+                modifiersDown =
+                    model.modifiersDown
+            in
+            { model
+                | keysDown = Set.remove (String.toUpper key) model.keysDown
+                , modifiersDown =
+                    if key == "Shift" then
+                        { modifiersDown | shift = False }
+
+                    else if key == "Control" then
+                        { modifiersDown | ctrl = False }
+
+                    else if key == "Alt" then
+                        { modifiersDown | alt = False }
+
+                    else
+                        modifiersDown
             }
 
         MouseMove x y ->
@@ -633,14 +712,6 @@ applyEvent event model =
 
                                 yAxis : Axis3d Meters WorldCoordinates
                                 yAxis =
-                                    -- Viewpoint3d.lookAt
-                                    --     { eyePoint = model.camera.center
-                                    --     , focalPoint =
-                                    --         model.camera.center
-                                    --             |> Point3d.translateIn model.camera.forward (Length.meters 1)
-                                    --     , upDirection = Direction3d.positiveZ
-                                    --     }
-                                    --     |> Viewpoint3d.yDirection
                                     Direction3d.positiveZ
                                         |> Axis3d.through model.camera.center
                             in
@@ -650,11 +721,6 @@ applyEvent event model =
                                 -- Yaw
                                 |> Direction3d.rotateAround yAxis (Angle.degrees (-x / 10))
                     }
-            }
-
-        KeyUp key ->
-            { model
-                | keysDown = Set.remove key model.keysDown
             }
 
 
