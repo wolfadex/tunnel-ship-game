@@ -27,7 +27,7 @@ import LineSegment2d exposing (LineSegment2d)
 import LineSegment3d exposing (LineSegment3d)
 import Numeral
 import Pixels exposing (Pixels)
-import Plane3d
+import Plane3d exposing (Plane3d)
 import Point2d exposing (Point2d)
 import Point3d exposing (Point3d)
 import Point3d.Projection
@@ -59,13 +59,16 @@ type alias Model =
     , track : Track
     , camera : EditorCamera
     , debugFlags : DebugFlags
-    , movingControlPoint :
-        Maybe
-            { pointerId : Json.Decode.Value
-            , index : Int
-            , point : Point2d Pixels ScreenSpace
-            , direction : Direction3d WorldCoordinates
-            }
+    , movingControlPoint : Maybe ActiveControlPoint
+    }
+
+
+type alias ActiveControlPoint =
+    { pointerId : Json.Decode.Value
+    , index : Int
+    , point : Point2d Pixels ScreenSpace
+    , direction : Direction3d WorldCoordinates
+    , plane : Plane3d Meters WorldCoordinates
     }
 
 
@@ -350,7 +353,7 @@ type Msg
     | DebugTrackPathToggled Visible
     | DebugTrackPathDownDirectionToggled Visible
     | DebugTunnelToggled Visible
-    | PointerDown Int (Direction3d WorldCoordinates) Json.Decode.Value (Point2d Pixels ScreenSpace)
+    | PointerDown ActiveControlPoint
     | PointerMove Int (Point2d Pixels ScreenSpace)
     | PointerUp Int
 
@@ -420,15 +423,9 @@ update msg model =
                 |> redrawTrackGeometry
                 |> Update.save
 
-        PointerDown index direction pointerId point ->
+        PointerDown activeControlPoint ->
             { model
-                | movingControlPoint =
-                    Just
-                        { pointerId = pointerId
-                        , index = index
-                        , point = point
-                        , direction = direction
-                        }
+                | movingControlPoint = Just activeControlPoint
             }
                 |> Update.save
 
@@ -460,10 +457,10 @@ update msg model =
                                     , verticalFieldOfView = Angle.degrees 30
                                     }
 
-                            screenRectangle : Rectangle2d Pixels.Pixels ScreenSpace
+                            screenRectangle : Rectangle2d Pixels ScreenSpace
                             screenRectangle =
-                                Point2d.pixels viewSize.width viewSize.height
-                                    |> Rectangle2d.from Point2d.origin
+                                Point2d.pixels viewSize.width 0
+                                    |> Rectangle2d.from (Point2d.pixels 0 viewSize.height)
 
                             newControlPoint : Int -> Point3d Meters WorldCoordinates
                             newControlPoint i =
@@ -492,22 +489,14 @@ update msg model =
                                                         CubicSpline3d.firstControlPoint
                                                )
 
-                                    plane =
-                                        Plane3d.through oldControlPoint movingControlPoint.direction
-
                                     axis =
                                         Axis3d.through oldControlPoint movingControlPoint.direction
                                 in
                                 if movingControlPoint.index == i then
                                     point
                                         |> Camera3d.ray camera screenRectangle
-                                        |> Axis3d.intersectionWithPlane plane
+                                        |> Axis3d.intersectionWithPlane movingControlPoint.plane
                                         |> Maybe.map (Point3d.projectOntoAxis axis)
-                                        |> Maybe.map
-                                            (Util.Debug.logMap
-                                                (\ncp -> ( ncp, oldControlPoint ))
-                                                "new control point"
-                                            )
                                         |> Maybe.withDefault oldControlPoint
 
                                 else
@@ -672,6 +661,11 @@ applyEvent event model =
 view : Model -> List (Html Msg)
 view model =
     let
+        viewSize =
+            { width = 800
+            , height = 600
+            }
+
         camera : Camera3d Meters WorldCoordinates
         camera =
             Camera3d.perspective
@@ -687,37 +681,31 @@ view model =
                 }
     in
     [ Scene3d.cloudy
-        { dimensions = ( Pixels.int 800, Pixels.int 600 )
+        { dimensions = ( Pixels.int viewSize.width, Pixels.int viewSize.height )
         , upDirection = Direction3d.negativeY
         , camera = camera
         , clipDepth = Length.millimeters 0.1
         , background = Scene3d.backgroundColor Color.black
         , entities =
             [ model.track.geometry
-            , [ LineSegment3d.from
-                    Point3d.origin
-                    (Point3d.origin
-                        |> Point3d.translateIn Direction3d.positiveX (Length.meters 1)
-                    )
-              ]
-                |> Scene3d.Mesh.lineSegments
-                |> Scene3d.mesh (Scene3d.Material.color Color.red)
-            , [ LineSegment3d.from
-                    Point3d.origin
-                    (Point3d.origin
-                        |> Point3d.translateIn Direction3d.positiveY (Length.meters 1)
-                    )
-              ]
-                |> Scene3d.Mesh.lineSegments
-                |> Scene3d.mesh (Scene3d.Material.color Color.green)
-            , [ LineSegment3d.from
-                    Point3d.origin
-                    (Point3d.origin
-                        |> Point3d.translateIn Direction3d.positiveZ (Length.meters 1)
-                    )
-              ]
-                |> Scene3d.Mesh.lineSegments
-                |> Scene3d.mesh (Scene3d.Material.color Color.blue)
+            , LineSegment3d.from
+                Point3d.origin
+                (Point3d.origin
+                    |> Point3d.translateIn Direction3d.positiveX (Length.meters 1)
+                )
+                |> Scene3d.lineSegment (Scene3d.Material.color Color.red)
+            , LineSegment3d.from
+                Point3d.origin
+                (Point3d.origin
+                    |> Point3d.translateIn Direction3d.positiveY (Length.meters 1)
+                )
+                |> Scene3d.lineSegment (Scene3d.Material.color Color.green)
+            , LineSegment3d.from
+                Point3d.origin
+                (Point3d.origin
+                    |> Point3d.translateIn Direction3d.positiveZ (Length.meters 1)
+                )
+                |> Scene3d.lineSegment (Scene3d.Material.color Color.blue)
             ]
         }
 
@@ -757,9 +745,7 @@ view model =
             }
         ]
     , viewControlPoints
-        { width = 800
-        , height = 600
-        }
+        viewSize
         camera
         model.movingControlPoint
         model.track.path
@@ -773,13 +759,7 @@ type ScreenSpace
 viewControlPoints :
     { width : Float, height : Float }
     -> Camera3d Meters WorldCoordinates
-    ->
-        Maybe
-            { pointerId : Json.Decode.Value
-            , index : Int
-            , point : Point2d Pixels ScreenSpace
-            , direction : Direction3d WorldCoordinates
-            }
+    -> Maybe ActiveControlPoint
     -> CubicSpline3d.Nondegenerate Meters WorldCoordinates
     -> Html Msg
 viewControlPoints viewSize camera movingControlPoint spline =
@@ -790,7 +770,7 @@ viewControlPoints viewSize camera movingControlPoint spline =
         -- Defines the shape of the 'screen' that we will be using when
         --
         -- projecting 3D points into 2D
-        screenRectangle : Rectangle2d Pixels.Pixels ScreenSpace
+        screenRectangle : Rectangle2d Pixels ScreenSpace
         screenRectangle =
             Point2d.pixels viewSize.width viewSize.height
                 |> Rectangle2d.from Point2d.origin
@@ -799,7 +779,8 @@ viewControlPoints viewSize camera movingControlPoint spline =
         -- the logo itself and then project them into 2D screen space
         controlPoints :
             List
-                { point : Point2d Pixels ScreenSpace
+                { center : Point2d Pixels ScreenSpace
+                , point : Point3d Meters WorldCoordinates
                 , xSegment : LineSegment2d Pixels ScreenSpace
                 , ySegment : LineSegment2d Pixels ScreenSpace
                 , zSegment : LineSegment2d Pixels ScreenSpace
@@ -807,7 +788,8 @@ viewControlPoints viewSize camera movingControlPoint spline =
         controlPoints =
             List.map
                 (\p ->
-                    { point = Point3d.Projection.toScreenSpace camera screenRectangle p.point
+                    { center = Point3d.Projection.toScreenSpace camera screenRectangle p.point
+                    , point = p.point
                     , xSegment =
                         LineSegment2d.from
                             (Point3d.Projection.toScreenSpace camera screenRectangle p.point)
@@ -868,8 +850,8 @@ viewControlPoints viewSize camera movingControlPoint spline =
                   }
                 ]
 
-        viewControlPointDirSegment : String -> Int -> Direction3d WorldCoordinates -> LineSegment2d Pixels ScreenSpace -> Svg Msg
-        viewControlPointDirSegment color index dir segment =
+        viewControlPointDirSegment : String -> Int -> Plane3d Meters WorldCoordinates -> Direction3d WorldCoordinates -> LineSegment2d Pixels ScreenSpace -> Svg Msg
+        viewControlPointDirSegment color index plane dir segment =
             Geometry.Svg.lineSegment2d
                 ([ Svg.Attributes.stroke color
                  , Svg.Attributes.strokeWidth "4"
@@ -877,8 +859,8 @@ viewControlPoints viewSize camera movingControlPoint spline =
 
                  -- TODO
                  -- ([ Svg.Attributes.pointerEvents "all"
-                 , Svg.Events.on "pointerdown" (pointerDown index dir)
-                 , Svg.Events.on "pointerup" (pointerUp index)
+                 , Svg.Events.on "pointerdown" (decodePointerDown index plane dir)
+                 , Svg.Events.on "pointerup" (decodePointerUp index)
 
                  -- , Svg.Events.on "keydown" (decodeKeyDown index)
                  -- ]
@@ -889,7 +871,7 @@ viewControlPoints viewSize camera movingControlPoint spline =
                                 if details.index == index then
                                     [ Svg.Attributes.style "cursor: grab"
                                     , Html.Attributes.property "___capturePointer" details.pointerId
-                                    , Svg.Events.on "pointermove" (pointerMove index)
+                                    , Svg.Events.on "pointermove" (decodePointerMove index)
                                     ]
 
                                 else
@@ -908,16 +890,31 @@ viewControlPoints viewSize camera movingControlPoint spline =
                     Svg.g
                         [ Svg.Attributes.class "track-editor-control-point"
                         ]
-                        [ viewControlPointDirSegment "red" index Direction3d.positiveX controlPoint.xSegment
-                        , viewControlPointDirSegment "green" index Direction3d.positiveY controlPoint.ySegment
-                        , viewControlPointDirSegment "blue" index Direction3d.positiveZ controlPoint.zSegment
+                        [ viewControlPointDirSegment
+                            "red"
+                            index
+                            (Plane3d.through controlPoint.point Direction3d.positiveZ)
+                            Direction3d.positiveX
+                            controlPoint.xSegment
+                        , viewControlPointDirSegment
+                            "green"
+                            index
+                            (Plane3d.through controlPoint.point Direction3d.positiveZ)
+                            Direction3d.positiveY
+                            controlPoint.ySegment
+                        , viewControlPointDirSegment
+                            "blue"
+                            index
+                            (Plane3d.through controlPoint.point Direction3d.positiveX)
+                            Direction3d.positiveZ
+                            controlPoint.zSegment
                         , Geometry.Svg.circle2d
                             [ Svg.Attributes.stroke "rgb(200, 255, 200)"
                             , Svg.Attributes.strokeWidth "2"
                             , Svg.Attributes.fill "rgba(0, 0, 0, 0)"
                             , Html.Attributes.attribute "tabindex" "0"
                             ]
-                            (Circle2d.withRadius (Pixels.float 6) controlPoint.point)
+                            (Circle2d.withRadius (Pixels.float 6) controlPoint.center)
                         ]
                 )
                 controlPoints
@@ -930,18 +927,18 @@ viewControlPoints viewSize camera movingControlPoint spline =
                 (\controlPoint acc ->
                     case acc of
                         Nothing ->
-                            Just ( controlPoint.point, [] )
+                            Just ( controlPoint.center, [] )
 
                         Just ( previousControlPoint, segments ) ->
                             Just
-                                ( controlPoint.point
+                                ( controlPoint.center
                                 , Geometry.Svg.lineSegment2d
                                     [ Svg.Attributes.stroke "red"
                                     , Svg.Attributes.strokeWidth "0.5"
                                     , Svg.Attributes.strokeDasharray "5 5"
                                     , Svg.Attributes.class "track-editor-label-ignore"
                                     ]
-                                    (LineSegment2d.from previousControlPoint controlPoint.point)
+                                    (LineSegment2d.from previousControlPoint controlPoint.center)
                                     :: segments
                                 )
                 )
@@ -955,7 +952,7 @@ viewControlPoints viewSize camera movingControlPoint spline =
         -- Used for converting from coordinates relative to the bottom-left
         -- corner of the 2D drawing into coordinates relative to the top-left
         -- corner (which is what SVG natively works in)
-        topLeftFrame : Frame2d.Frame2d Pixels.Pixels coordinates defines2
+        topLeftFrame : Frame2d Pixels coordinates defines2
         topLeftFrame =
             Frame2d.reverseY (Frame2d.atPoint (Point2d.xy Quantity.zero (Pixels.float viewSize.height)))
     in
@@ -970,28 +967,30 @@ viewControlPoints viewSize camera movingControlPoint spline =
         ]
 
 
-pointerDown : Int -> Direction3d WorldCoordinates -> Json.Decode.Decoder Msg
-pointerDown index dir =
+decodePointerDown : Int -> Plane3d Meters WorldCoordinates -> Direction3d WorldCoordinates -> Json.Decode.Decoder Msg
+decodePointerDown index plane dir =
     Json.Decode.map3
         (\pointerId x y ->
             PointerDown
-                index
-                dir
-                pointerId
-                (Point2d.pixels x y)
+                { index = index
+                , direction = dir
+                , pointerId = pointerId
+                , point = Point2d.pixels x y
+                , plane = plane
+                }
         )
         (Json.Decode.field "pointerId" Json.Decode.value)
         (Json.Decode.field "clientX" Json.Decode.float)
         (Json.Decode.field "clientY" Json.Decode.float)
 
 
-pointerUp : Int -> Json.Decode.Decoder Msg
-pointerUp index =
+decodePointerUp : Int -> Json.Decode.Decoder Msg
+decodePointerUp index =
     Json.Decode.succeed (PointerUp index)
 
 
-pointerMove : Int -> Json.Decode.Decoder Msg
-pointerMove index =
+decodePointerMove : Int -> Json.Decode.Decoder Msg
+decodePointerMove index =
     Json.Decode.map2
         (\x y ->
             PointerMove
