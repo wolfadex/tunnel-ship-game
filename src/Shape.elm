@@ -2,12 +2,15 @@ module Shape exposing
     ( Shape
     , custom
     , newRegular
+    , encode
     , sideCount
     )
 
 import Length exposing (Meters)
+import Json.Encode
 import Point2d
 import Polygon2d exposing (Polygon2d)
+import Util.Point2d
 
 
 type alias Shape coordinates =
@@ -40,3 +43,10 @@ custom =
         , Point2d.meters -0.75 -0.75
         , Point2d.meters 0 -0.5
         ]
+
+
+encode : Shape coordinates -> Json.Encode.Value
+encode shape =
+    shape
+        |> Polygon2d.vertices
+        |> Json.Encode.list (Util.Point2d.encode Length.toMeters)

@@ -8,6 +8,8 @@ module Track exposing
     , sample
     , view
     , viewControlPoints
+    , encode
+    , decode
     )
 
 import Axis3d
@@ -43,6 +45,7 @@ import Svg exposing (Svg)
 import Svg.Attributes
 import Svg.Events
 import Visible exposing (Visible)
+import Json.Encode
 
 
 type Track
@@ -54,6 +57,30 @@ type alias Internal =
     , path : CubicSpline3d.Nondegenerate Meters Coordinates.World
     , geometry : Scene3d.Entity Coordinates.World
     }
+
+
+encode : Track -> Json.Encode.Value
+encode (Track track) =
+    Json.Encode.object
+        [ ( "shape", Shape.encode track.shape )
+        , ( "path", encodePath track.path )
+        ]
+
+
+
+encodePath : CubicSpline3d.Nondegenerate Meters Coordinates.World -> Json.Encode.Value
+encodePath path =
+    let
+        arcLength =
+            CubicSpline3d.arcLengthParameterized
+                { maxError = Length.meters 0.01 }
+                path
+    in
+    Json.Encode.object
+        [ ( "controlPoint1", Length.encode arcLength )
+        , ( "points", encodePoints arcLength )
+        ]
+
 
 
 init : Shape Coordinates.World -> DebugFlags -> Track
