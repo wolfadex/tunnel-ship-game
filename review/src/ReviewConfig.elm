@@ -37,8 +37,8 @@ config : List Rule
 config =
     [ Docs.ReviewAtDocs.rule
     , NoConfusingPrefixOperator.rule
-    , NoDebug.Log.rule
-        |> Rule.ignoreErrorsForFiles [ "src/Util/Debug.elm" ]
+    -- , NoDebug.Log.rule
+    --     |> Rule.ignoreErrorsForFiles [ "src/Util/Debug.elm" ]
     , NoDebug.TodoOrToString.rule
         |> Rule.ignoreErrorsForDirectories [ "tests/" ]
     , NoExposingEverything.rule
@@ -52,6 +52,7 @@ config =
     , NoUnused.CustomTypeConstructorArgs.rule
     , NoUnused.Dependencies.rule
     , NoUnused.Exports.rule
+        |> Rule.ignoreErrorsForFiles [ "src/Util/Debug.elm" ]
     , NoUnused.Parameters.rule
     , NoUnused.Patterns.rule
     , NoUnused.Variables.rule

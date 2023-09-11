@@ -1,17 +1,13 @@
 module Main exposing
     ( Flags
     , Model
+    , Msg
     , main
     )
 
 import Browser
-import Browser.Events
 import Html
-import Html.Attributes
 import Race
-import Random
-import Set exposing (Set)
-import Time
 import TrackEditor
 import Update exposing (Update)
 

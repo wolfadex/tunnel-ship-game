@@ -1,60 +1,35 @@
-module TrackEditor exposing (..)
+module TrackEditor exposing (Direction(..), EditorCamera, Event(..), Flags, Model, Modifiers, Msg(..), decodeEvent, decodeKeyDown, init, subscriptions, update, view)
 
-import Acceleration exposing (Acceleration)
-import Angle exposing (Angle)
-import Axis2d
+import Angle
 import Axis3d exposing (Axis3d)
-import Block3d exposing (Block3d)
-import Browser
 import Browser.Events
 import Camera3d exposing (Camera3d)
-import Circle2d
 import Color
 import Coordinates
-import CubicSpline3d exposing (CubicSpline3d)
-import Cylinder3d exposing (Cylinder3d)
 import DebugFlags exposing (DebugFlags)
-import Direction2d
 import Direction3d exposing (Direction3d)
 import Duration exposing (Duration)
-import Frame2d exposing (Frame2d)
-import Frame3d
-import Geometry.Svg
 import Html exposing (Html)
 import Html.Attributes
-import Html.Events
 import Json.Decode
 import Length exposing (Length, Meters)
-import LineSegment2d exposing (LineSegment2d)
-import LineSegment3d exposing (LineSegment3d)
+import LineSegment3d
 import Numeral
 import Pixels exposing (Pixels)
-import Plane3d exposing (Plane3d)
 import Point2d exposing (Point2d)
 import Point3d exposing (Point3d)
-import Point3d.Projection
-import Polygon2d
-import Quantity exposing (Quantity)
-import Random
+import Quantity
 import Rectangle2d exposing (Rectangle2d)
 import Scene3d
 import Scene3d.Material
-import Scene3d.Mesh
 import Set exposing (Set)
 import Shape exposing (Shape)
-import SketchPlane3d exposing (SketchPlane3d)
-import Speed exposing (Speed)
-import Svg exposing (Svg)
-import Svg.Attributes
-import Svg.Events
+import Speed
 import Time
 import Track exposing (Track)
 import Update exposing (Update)
-import Util.Debug
 import Util.Function
-import Vector2d
-import Vector3d exposing (Vector3d)
-import Viewpoint3d exposing (Viewpoint3d)
+import Viewpoint3d
 import Visible exposing (Visible)
 
 
@@ -94,33 +69,6 @@ init timeNow =
             -- Shape.custom
             Shape.newRegular 5
 
-        initialPath =
-            CubicSpline3d.fromControlPoints
-                (Point3d.xyz
-                    (Length.meters 1)
-                    (Length.meters 1)
-                    (Length.meters 0)
-                )
-                (Point3d.xyz
-                    (Length.meters 5)
-                    (Length.meters 20)
-                    (Length.meters 0)
-                )
-                (Point3d.xyz
-                    (Length.meters 9)
-                    (Length.meters -8)
-                    (Length.meters 0)
-                )
-                (Point3d.xyz
-                    (Length.meters 13)
-                    (Length.meters 8)
-                    (Length.meters 0)
-                )
-
-        path : CubicSpline3d.Nondegenerate Meters Coordinates.World
-        path =
-            carlPath initialPath
-
         debugFlags : DebugFlags
         debugFlags =
             { tunnelVisible = Visible.Visible
@@ -147,99 +95,6 @@ init timeNow =
     , lastTickTime = Time.millisToPosix (round timeNow)
     }
         |> Update.save
-
-
-carlPath : CubicSpline3d Meters Coordinates.World -> CubicSpline3d.Nondegenerate Meters Coordinates.World
-carlPath a =
-    case CubicSpline3d.nondegenerate a of
-        Ok p ->
-            p
-
-        Err err ->
-            let
-                _ =
-                    Debug.log "Error in carlPath" err
-            in
-            carlPath a
-
-
-createTrackPathGeometry : CubicSpline3d.Nondegenerate Meters coordinates -> Int -> Float -> Scene3d.Entity coordinates
-createTrackPathGeometry path segmentsInt segmentsFloat =
-    List.range 0 segmentsInt
-        |> List.map
-            (\i ->
-                let
-                    ( p, dir ) =
-                        CubicSpline3d.sample path (toFloat i / segmentsFloat)
-                in
-                LineSegment3d.from p
-                    (p
-                        |> Point3d.translateIn dir (Length.meters 1)
-                    )
-            )
-        |> Scene3d.Mesh.lineSegments
-        |> Scene3d.mesh (Scene3d.Material.color Color.red)
-
-
-createTrackDownGeometry : CubicSpline3d.Nondegenerate Meters coordinates -> Int -> Float -> Scene3d.Entity coordinates
-createTrackDownGeometry path segmentsInt segmentsFloat =
-    List.range 0 segmentsInt
-        |> List.map
-            (\i ->
-                let
-                    ( p, _ ) =
-                        CubicSpline3d.sample path (toFloat i / segmentsFloat)
-
-                    dir =
-                        sketchPlaneAt path (toFloat i / segmentsFloat)
-                            |> SketchPlane3d.yDirection
-                in
-                LineSegment3d.from p
-                    (p
-                        |> Point3d.translateIn dir (Length.meters 1)
-                    )
-            )
-        |> Scene3d.Mesh.lineSegments
-        |> Scene3d.mesh (Scene3d.Material.color Color.green)
-
-
-sketchPlaneAt : CubicSpline3d.Nondegenerate Meters coordinates -> Float -> SketchPlane3d Meters coordinates defines
-sketchPlaneAt path dist =
-    let
-        ( center, normal ) =
-            CubicSpline3d.sample path dist
-    in
-    SketchPlane3d.through center normal
-
-
-viewTunnelRing : Shape coordinates -> CubicSpline3d.Nondegenerate Meters coordinates -> Float -> Scene3d.Entity coordinates
-viewTunnelRing shape path dist =
-    shape
-        |> Polygon2d.edges
-        |> List.map (LineSegment3d.on (sketchPlaneAt path dist))
-        |> Scene3d.Mesh.lineSegments
-        |> Scene3d.mesh (Scene3d.Material.color Color.lightPurple)
-
-
-viewTunnelVertConnectors : Point2d Meters coordinates -> Scene3d.Entity coordinates
-viewTunnelVertConnectors point =
-    let
-        point3d : Point3d Meters coordinates
-        point3d =
-            Point3d.on
-                SketchPlane3d.xz
-                point
-    in
-    point3d
-        |> Point3d.translateIn Direction3d.positiveY (Length.kilometers 100)
-        |> LineSegment3d.from
-            (point3d
-                |> Point3d.translateIn Direction3d.positiveY (Length.meters -50)
-            )
-        |> List.singleton
-        |> Scene3d.Mesh.lineSegments
-        |> Scene3d.mesh
-            (Scene3d.Material.color Color.lightPurple)
 
 
 subscriptions : Model -> Sub Msg
@@ -305,8 +160,7 @@ type Event
 
 
 type Direction
-    = Clockwise
-    | CounterClockwise
+    = CounterClockwise
 
 
 update : Msg -> Model -> Update Model Msg
@@ -422,7 +276,7 @@ update msg model =
                         model
                             |> Update.save
 
-        PointerUp index ->
+        PointerUp _ ->
             { model | movingControlPoint = Nothing }
                 |> Update.save
 

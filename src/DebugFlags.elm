@@ -1,4 +1,4 @@
-module DebugFlags exposing (..)
+module DebugFlags exposing (DebugFlags)
 
 import Visible exposing (Visible)
 

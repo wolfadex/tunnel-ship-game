@@ -1,17 +1,15 @@
-module Race exposing (..)
+module Race exposing (Direction(..), Event(..), Flags, Model, Msg(..), RadiansPerSecond, RadiansPerSecondSquared, RotationAcceleration, RotationSpeed, Ship, subscriptions, update, view)
 
 import Acceleration exposing (Acceleration)
 import Angle exposing (Angle)
 import Axis3d
 import Block3d exposing (Block3d)
-import Browser
 import Browser.Events
 import Camera3d
 import Color
 import Coordinates
-import CubicSpline3d exposing (CubicSpline3d)
-import Cylinder3d exposing (Cylinder3d)
-import Direction3d exposing (Direction3d)
+import CubicSpline3d
+import Direction3d
 import Duration exposing (Duration)
 import Frame3d
 import Html exposing (Html)
@@ -20,22 +18,18 @@ import Json.Decode
 import Length exposing (Length, Meters)
 import LineSegment3d
 import Pixels
-import Point2d exposing (Point2d)
 import Point3d exposing (Point3d)
-import Polygon2d
 import Quantity exposing (Quantity)
 import Random
 import Scene3d
 import Scene3d.Material
-import Scene3d.Mesh
 import Set exposing (Set)
 import Shape exposing (Shape)
-import SketchPlane3d exposing (SketchPlane3d)
+import SketchPlane3d
 import Speed exposing (Speed)
 import Time
 import Track exposing (Track)
 import Update exposing (Update)
-import Vector3d exposing (Vector3d)
 import Viewpoint3d
 
 
@@ -50,17 +44,8 @@ type alias Model =
     }
 
 
-type alias Laser =
-    Point3d Meters WorldCoordinates
-
-
-type alias Enemy =
-    { location : Point3d Meters WorldCoordinates
-    }
-
-
 type alias Ship =
-    { geometry : Block3d Meters WorldCoordinates
+    { geometry : Block3d Meters Coordinates.World
     , speed : Speed
     , acceleration : Acceleration
     , distance : Length
@@ -86,18 +71,7 @@ type alias RotationAcceleration =
     Quantity Float RadiansPerSecondSquared
 
 
-type alias RotatingDetails =
-    { travelTime : Float
-    , direction : Direction
-    , shootOnComplete : Bool
-    }
-
-
-type WorldCoordinates
-    = WorldCoordinates Never
-
-
-initShip : CubicSpline3d.Nondegenerate Meters WorldCoordinates -> Shape WorldCoordinates -> Ship
+initShip : CubicSpline3d.Nondegenerate Meters Coordinates.World -> Shape Coordinates.World -> Ship
 initShip path shape =
     { geometry =
         Block3d.centeredOn Frame3d.atOrigin
@@ -159,13 +133,6 @@ init timeNow =
 
         path =
             carl initialPath
-
-        arcLength =
-            CubicSpline3d.arcLengthParameterized
-                { maxError = Length.meters 0.01 }
-                path
-                |> CubicSpline3d.arcLength
-                |> Length.inKilometers
     in
     { ship =
         initShip path initialShape
@@ -196,44 +163,6 @@ init timeNow =
     , lastTickTime = Time.millisToPosix (round timeNow)
     }
         |> Update.save
-
-
-sketchPlaneAt : CubicSpline3d.Nondegenerate Meters coordinates -> Float -> SketchPlane3d Meters coordinates defines
-sketchPlaneAt path dist =
-    let
-        ( center, normal ) =
-            CubicSpline3d.sample path dist
-    in
-    SketchPlane3d.through center normal
-
-
-viewTunnelRing : Shape coordinates -> CubicSpline3d.Nondegenerate Meters coordinates -> Float -> Scene3d.Entity coordinates
-viewTunnelRing shape path dist =
-    shape
-        |> Polygon2d.edges
-        |> List.map (LineSegment3d.on (sketchPlaneAt path dist))
-        |> Scene3d.Mesh.lineSegments
-        |> Scene3d.mesh (Scene3d.Material.color Color.lightPurple)
-
-
-viewTunnelVertConnectors : Point2d Meters coordinates -> Scene3d.Entity coordinates
-viewTunnelVertConnectors point =
-    let
-        point3d =
-            Point3d.on
-                SketchPlane3d.xz
-                point
-    in
-    point3d
-        |> Point3d.translateIn Direction3d.positiveY (Length.kilometers 100)
-        |> LineSegment3d.from
-            (point3d
-                |> Point3d.translateIn Direction3d.positiveY (Length.meters -50)
-            )
-        |> List.singleton
-        |> Scene3d.Mesh.lineSegments
-        |> Scene3d.mesh
-            (Scene3d.Material.color Color.lightPurple)
 
 
 subscriptions : Model -> Sub Msg
@@ -279,8 +208,7 @@ type Event
 
 
 type Direction
-    = Clockwise
-    | CounterClockwise
+    = CounterClockwise
 
 
 update : Msg -> Model -> Update Model Msg
@@ -393,19 +321,14 @@ rotateShip deltaTime =
 view : Model -> List (Html Msg)
 view model =
     let
-        arcLengthParam =
-            CubicSpline3d.arcLengthParameterized
-                { maxError = Length.meters 0.01 }
-                model.track.path
-
         ( focalPoint, _ ) =
             model.ship.distance
-                |> CubicSpline3d.sampleAlong arcLengthParam
+                |> Track.sample model.track
 
         ( followPoint, _ ) =
             model.ship.distance
                 |> Quantity.minus (Length.meters 4)
-                |> CubicSpline3d.sampleAlong arcLengthParam
+                |> Track.sample model.track
 
         sketchPlane =
             SketchPlane3d.through followPoint
@@ -435,8 +358,8 @@ view model =
         , clipDepth = Length.millimeters 0.1
         , background = Scene3d.backgroundColor Color.black
         , entities =
-            [ model.track.geometry
-            , viewShip focalPoint model.track.path model.ship
+            [ Track.view model.track
+            , viewShip focalPoint model.track model.ship
             ]
         }
 
@@ -478,16 +401,11 @@ view model =
     ]
 
 
-viewShip : Point3d Meters WorldCoordinates -> CubicSpline3d.Nondegenerate Meters WorldCoordinates -> Ship -> Scene3d.Entity WorldCoordinates
-viewShip focalPoint path ship =
+viewShip : Point3d Meters Coordinates.World -> Track -> Ship -> Scene3d.Entity Coordinates.World
+viewShip focalPoint track ship =
     let
-        arcLengthParam =
-            CubicSpline3d.arcLengthParameterized
-                { maxError = Length.meters 0.01 }
-                path
-
         ( center, normal ) =
-            CubicSpline3d.sampleAlong arcLengthParam ship.distance
+            Track.sample track ship.distance
 
         sketchPlane =
             SketchPlane3d.through center normal
@@ -512,52 +430,3 @@ viewShip focalPoint path ship =
             )
             |> Scene3d.lineSegment (Scene3d.Material.color Color.red)
         ]
-
-
-makeRailThingy : Cylinder3d Meters coordinates -> Scene3d.Entity coordinates
-makeRailThingy =
-    Scene3d.cylinder (Scene3d.Material.matte Color.green)
-
-
-laserToGeometry : Laser -> Cylinder3d Meters WorldCoordinates
-laserToGeometry laser =
-    Cylinder3d.centeredOn laser
-        Direction3d.positiveY
-        { radius = Length.meters 0.03125
-        , length = Length.meters 1
-        }
-
-
-viewLaser : Laser -> Scene3d.Entity WorldCoordinates
-viewLaser laser =
-    laser
-        |> laserToGeometry
-        |> Scene3d.cylinder (Scene3d.Material.matte Color.lightBlue)
-
-
-enemyToGeometry : Enemy -> Cylinder3d Meters WorldCoordinates
-enemyToGeometry enemy =
-    let
-        directionTowardsCenter =
-            enemy.location
-                |> Point3d.unwrap
-                |> (\p -> Point3d.unsafe { p | x = 0, z = 0 })
-                |> Direction3d.from enemy.location
-                |> Maybe.withDefault Direction3d.positiveX
-
-        height =
-            0.5
-    in
-    Cylinder3d.centeredOn enemy.location
-        directionTowardsCenter
-        { radius = Length.meters 0.25
-        , length = Length.meters height
-        }
-        |> Cylinder3d.translateIn directionTowardsCenter (Length.meters (height / 2))
-
-
-viewEnemy : Enemy -> Scene3d.Entity WorldCoordinates
-viewEnemy enemy =
-    enemy
-        |> enemyToGeometry
-        |> Scene3d.cylinder (Scene3d.Material.matte Color.red)

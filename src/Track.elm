@@ -5,64 +5,43 @@ module Track exposing
     , length
     , moveControlPoint
     , newDebugFlags
+    , sample
     , view
     , viewControlPoints
     )
 
-import Acceleration exposing (Acceleration)
-import Angle exposing (Angle)
-import Axis2d
-import Axis3d exposing (Axis3d)
-import Block3d exposing (Block3d)
-import Browser
-import Browser.Events
+import Axis3d
 import Camera3d exposing (Camera3d)
 import Circle2d
 import Color
 import Coordinates
 import CubicSpline3d exposing (CubicSpline3d)
-import Cylinder3d exposing (Cylinder3d)
 import DebugFlags exposing (DebugFlags)
-import Direction2d
 import Direction3d exposing (Direction3d)
-import Duration exposing (Duration)
 import Frame2d exposing (Frame2d)
-import Frame3d
 import Geometry.Svg
 import Html exposing (Html)
 import Html.Attributes
-import Html.Events
 import Json.Decode
 import Length exposing (Length, Meters)
 import LineSegment2d exposing (LineSegment2d)
-import LineSegment3d exposing (LineSegment3d)
-import Numeral
+import LineSegment3d
 import Pixels exposing (Pixels)
 import Plane3d exposing (Plane3d)
 import Point2d exposing (Point2d)
 import Point3d exposing (Point3d)
 import Point3d.Projection
 import Polygon2d
-import Quantity exposing (Quantity)
-import Random
+import Quantity
 import Rectangle2d exposing (Rectangle2d)
 import Scene3d
 import Scene3d.Material
 import Scene3d.Mesh
-import Set exposing (Set)
 import Shape exposing (Shape)
 import SketchPlane3d exposing (SketchPlane3d)
-import Speed exposing (Speed)
 import Svg exposing (Svg)
 import Svg.Attributes
 import Svg.Events
-import Time
-import Update exposing (Update)
-import Util.Debug
-import Util.Function
-import Vector2d
-import Vector3d exposing (Vector3d)
-import Viewpoint3d exposing (Viewpoint3d)
 import Visible exposing (Visible)
 
 
@@ -154,7 +133,7 @@ createTrackGeometry debugFlags initialShape path =
         |> List.map (\i -> viewTunnelRing initialShape path (toFloat i / segmentsFloat))
         |> viewIfVisible debugFlags.tunnelVisible
     ]
-        |> List.concatMap identity
+        |> List.concat
         |> Scene3d.group
 
 
@@ -270,11 +249,12 @@ moveControlPoint { debugFlags, movingControlPoint, camera, screenRectangle } (Tr
                                     in
                                     CubicSpline3d.firstControlPoint
                            )
-
-                axis =
-                    Axis3d.through oldControlPoint movingControlPoint.direction
             in
             if movingControlPoint.index == i then
+                let
+                    axis =
+                        Axis3d.through oldControlPoint movingControlPoint.direction
+                in
                 movingControlPoint.point
                     |> Camera3d.ray camera screenRectangle
                     |> Axis3d.intersectionWithPlane movingControlPoint.plane
@@ -567,3 +547,14 @@ type alias ActiveControlPoint =
     , direction : Direction3d Coordinates.World
     , plane : Plane3d Meters Coordinates.World
     }
+
+
+sample : Track -> Length -> ( Point3d Meters Coordinates.World, Direction3d Coordinates.World )
+sample (Track track) dist =
+    let
+        arcLength =
+            CubicSpline3d.arcLengthParameterized
+                { maxError = Length.meters 0.01 }
+                track.path
+    in
+    CubicSpline3d.sampleAlong arcLength dist
