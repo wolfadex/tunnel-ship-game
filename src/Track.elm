@@ -1,6 +1,8 @@
 module Track exposing
     ( ActiveControlPoint
     , Track
+    , decode
+    , encode
     , init
     , length
     , moveControlPoint
@@ -8,8 +10,6 @@ module Track exposing
     , sample
     , view
     , viewControlPoints
-    , encode
-    , decode
     )
 
 import Axis3d
@@ -25,6 +25,7 @@ import Geometry.Svg
 import Html exposing (Html)
 import Html.Attributes
 import Json.Decode
+import Json.Encode
 import Length exposing (Length, Meters)
 import LineSegment2d exposing (LineSegment2d)
 import LineSegment3d
@@ -44,8 +45,8 @@ import SketchPlane3d exposing (SketchPlane3d)
 import Svg exposing (Svg)
 import Svg.Attributes
 import Svg.Events
+import Util.Point3d
 import Visible exposing (Visible)
-import Json.Encode
 
 
 type Track
@@ -67,23 +68,53 @@ encode (Track track) =
         ]
 
 
-
 encodePath : CubicSpline3d.Nondegenerate Meters Coordinates.World -> Json.Encode.Value
 encodePath path =
-    let
-        arcLength =
-            CubicSpline3d.arcLengthParameterized
-                { maxError = Length.meters 0.01 }
-                path
-    in
-    Json.Encode.object
-        [ ( "controlPoint1", Length.encode arcLength )
-        , ( "points", encodePoints arcLength )
-        ]
+    [ ( "controlPoint1", CubicSpline3d.firstControlPoint )
+    , ( "controlPoint2", CubicSpline3d.secondControlPoint )
+    , ( "controlPoint3", CubicSpline3d.thirdControlPoint )
+    , ( "controlPoint4", CubicSpline3d.fourthControlPoint )
+    ]
+        |> List.map
+            (\( name, accesorFn ) ->
+                ( name
+                , path
+                    |> CubicSpline3d.fromNondegenerate
+                    |> accesorFn
+                    |> Util.Point3d.encode Length.inMeters
+                )
+            )
+        |> Json.Encode.object
 
 
+decode : Json.Decode.Decoder Track
+decode =
+    Json.Decode.map2
+        (\shape path ->
+            Track
+                { shape = shape
+                , path = path
+                , geometry = createTrackGeometry Nothing shape path
+                }
+        )
+        (Json.Decode.field "shape" Shape.decode)
+        (Json.Decode.field "path" decodePath)
 
-init : Shape Coordinates.World -> DebugFlags -> Track
+
+decodePath : Json.Decode.Decoder (CubicSpline3d.Nondegenerate Meters Coordinates.World)
+decodePath =
+    Json.Decode.map4
+        (\p1 p2 p3 p4 ->
+            CubicSpline3d.fromControlPoints p1 p2 p3 p4
+                |> carlPath
+        )
+        (Json.Decode.field "controlPoint1" (Util.Point3d.decode Length.meters))
+        (Json.Decode.field "controlPoint2" (Util.Point3d.decode Length.meters))
+        (Json.Decode.field "controlPoint3" (Util.Point3d.decode Length.meters))
+        (Json.Decode.field "controlPoint4" (Util.Point3d.decode Length.meters))
+
+
+init : Shape Coordinates.World -> Maybe DebugFlags -> Track
 init shape debugFlags =
     let
         initialPath =
@@ -134,7 +165,7 @@ carlPath a =
             carlPath a
 
 
-createTrackGeometry : DebugFlags -> Shape coordinates -> CubicSpline3d.Nondegenerate Meters coordinates -> Scene3d.Entity coordinates
+createTrackGeometry : Maybe DebugFlags -> Shape coordinates -> CubicSpline3d.Nondegenerate Meters coordinates -> Scene3d.Entity coordinates
 createTrackGeometry debugFlags initialShape path =
     let
         arcLength : Float
@@ -152,13 +183,25 @@ createTrackGeometry debugFlags initialShape path =
         segmentsInt =
             round segmentsFloat
     in
-    [ viewIfVisible debugFlags.trackPathVisible
+    [ viewIfVisible
+        (debugFlags
+            |> Maybe.map .trackPathVisible
+            |> Maybe.withDefault Visible.Visible
+        )
         [ createTrackPathGeometry path segmentsInt segmentsFloat ]
-    , viewIfVisible debugFlags.trackPathDownDirectionVisible
+    , viewIfVisible
+        (debugFlags
+            |> Maybe.map .trackPathDownDirectionVisible
+            |> Maybe.withDefault Visible.Visible
+        )
         [ createTrackDownGeometry path segmentsInt segmentsFloat ]
     , List.range 0 segmentsInt
         |> List.map (\i -> viewTunnelRing initialShape path (toFloat i / segmentsFloat))
-        |> viewIfVisible debugFlags.tunnelVisible
+        |> viewIfVisible
+            (debugFlags
+                |> Maybe.map .tunnelVisible
+                |> Maybe.withDefault Visible.Visible
+            )
     ]
         |> List.concat
         |> Scene3d.group
@@ -236,7 +279,7 @@ newDebugFlags : DebugFlags -> Track -> Track
 newDebugFlags debugFlags (Track track) =
     Track
         { track
-            | geometry = createTrackGeometry debugFlags track.shape track.path
+            | geometry = createTrackGeometry (Just debugFlags) track.shape track.path
         }
 
 
@@ -303,7 +346,7 @@ moveControlPoint { debugFlags, movingControlPoint, camera, screenRectangle } (Tr
     Track
         { track
             | path = newPath
-            , geometry = createTrackGeometry debugFlags track.shape newPath
+            , geometry = createTrackGeometry (Just debugFlags) track.shape newPath
         }
 
 

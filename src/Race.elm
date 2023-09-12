@@ -159,7 +159,7 @@ init timeNow =
     -- ]
     , seed = Random.initialSeed 0
     , keysDown = Set.empty
-    , track = Track.init initialShape (Debug.todo "")
+    , track = Track.init initialShape Nothing
     , lastTickTime = Time.millisToPosix (round timeNow)
     }
         |> Update.save

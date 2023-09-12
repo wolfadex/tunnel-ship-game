@@ -89,7 +89,7 @@ init timeNow =
                 |> Direction3d.from center
                 |> Maybe.withDefault Direction3d.positiveX
         }
-    , track = Track.init initialShape debugFlags
+    , track = Track.init initialShape (Just debugFlags)
     , debugFlags = debugFlags
     , movingControlPoint = Nothing
     , lastTickTime = Time.millisToPosix (round timeNow)
