@@ -8,6 +8,7 @@ module Track exposing
     , moveControlPoint
     , newDebugFlags
     , sample
+    , sketchPlaneAt
     , view
     , viewControlPoints
     )
@@ -46,6 +47,7 @@ import Svg exposing (Svg)
 import Svg.Attributes
 import Svg.Events
 import Util.Point3d
+import Vector3d
 import Visible exposing (Visible)
 
 
@@ -245,7 +247,7 @@ createTrackDownGeometry path segmentsInt segmentsFloat =
                         CubicSpline3d.sample path (toFloat i / segmentsFloat)
 
                     dir =
-                        sketchPlaneAt path (toFloat i / segmentsFloat)
+                        sketchPlaneAtInternal path (toFloat i / segmentsFloat)
                             |> SketchPlane3d.yDirection
                 in
                 LineSegment3d.from p
@@ -261,18 +263,66 @@ viewTunnelRing : Shape coordinates -> CubicSpline3d.Nondegenerate Meters coordin
 viewTunnelRing shape path dist =
     shape
         |> Polygon2d.edges
-        |> List.map (LineSegment3d.on (sketchPlaneAt path dist))
+        |> List.map (LineSegment3d.on (sketchPlaneAtInternal path dist))
         |> Scene3d.Mesh.lineSegments
         |> Scene3d.mesh (Scene3d.Material.color Color.lightPurple)
 
 
-sketchPlaneAt : CubicSpline3d.Nondegenerate Meters coordinates -> Float -> SketchPlane3d Meters coordinates defines
-sketchPlaneAt path dist =
+sketchPlaneAtInternal : CubicSpline3d.Nondegenerate Meters coordinates -> Float -> SketchPlane3d Meters coordinates defines
+sketchPlaneAtInternal path dist =
     let
         ( center, normal ) =
             CubicSpline3d.sample path dist
     in
     SketchPlane3d.through center normal
+
+
+
+-- SketchPlane3d.unsafe
+--     { originPoint = center
+--     , xDirection =
+--         Vector3d.cross
+--             (normal
+--                 |> Direction3d.toVector
+--             )
+--             (Direction3d.positiveZ
+--                 |> Direction3d.toVector
+--             )
+--             |> Vector3d.direction
+--             |> Maybe.withDefault Direction3d.positiveX
+--     , yDirection = Direction3d.positiveZ
+--     }
+
+
+sketchPlaneAt : Track -> Length -> SketchPlane3d Meters Coordinates.World defines
+sketchPlaneAt (Track track) dist =
+    let
+        arcLength =
+            CubicSpline3d.arcLengthParameterized
+                { maxError = Length.meters 0.01 }
+                track.path
+
+        ( center, normal ) =
+            CubicSpline3d.sampleAlong arcLength dist
+    in
+    SketchPlane3d.through center normal
+
+
+
+-- SketchPlane3d.unsafe
+--     { originPoint = center
+--     , xDirection =
+--         Vector3d.cross
+--             (Direction3d.positiveZ
+--                 |> Direction3d.toVector
+--             )
+--             (normal
+--                 |> Direction3d.toVector
+--             )
+--             |> Vector3d.direction
+--             |> Maybe.withDefault Direction3d.positiveX
+--     , yDirection = Direction3d.positiveZ
+--     }
 
 
 newDebugFlags : DebugFlags -> Track -> Track

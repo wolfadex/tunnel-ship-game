@@ -335,10 +335,7 @@ viewLoaded model =
                 |> Track.sample model.track
 
         sketchPlane =
-            SketchPlane3d.through followPoint
-                (Direction3d.from followPoint focalPoint
-                    |> Maybe.withDefault Direction3d.positiveZ
-                )
+            Track.sketchPlaneAt model.track model.ship.distance
 
         upDir =
             sketchPlane
@@ -412,7 +409,7 @@ viewShip focalPoint track ship =
             Track.sample track ship.distance
 
         sketchPlane =
-            SketchPlane3d.through center normal
+            Track.sketchPlaneAt track ship.distance
 
         downDir =
             sketchPlane
