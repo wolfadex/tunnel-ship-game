@@ -2,7 +2,8 @@ module Update exposing
     ( Update
     , save, complete
     , withCmd, withMsg
-    , mapModel, mapMsg, andThen
+    , map, mapModel, mapMsg
+    , andThen
     )
 
 {-|
@@ -12,7 +13,8 @@ module Update exposing
 @docs save, complete
 
 @docs withCmd, withMsg
-@docs mapModel, mapMsg, andThen
+@docs map, mapModel, mapMsg
+@docs andThen
 
 -}
 
@@ -58,6 +60,14 @@ mapMsg fn (Update update) =
     Update
         { model = update.model
         , cmds = List.map (Cmd.map fn) update.cmds
+        }
+
+
+map : (model1 -> model2) -> (msg1 -> msg2) -> Update model1 msg1 -> Update model2 msg2
+map fnModel fnMsg (Update update) =
+    Update
+        { model = fnModel update.model
+        , cmds = List.map (Cmd.map fnMsg) update.cmds
         }
 
 

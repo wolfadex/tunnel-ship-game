@@ -163,122 +163,129 @@ type Direction
     = CounterClockwise
 
 
-update : Msg -> Model -> Update Model Msg
-update msg model =
-    case msg of
-        AnimationFrame timestamp ->
-            { model | lastTickTime = timestamp }
-                |> tick (timeDelta model timestamp)
+update :
+    { msg : Msg
+    , model : Model
+    , toMsg : Msg -> msg
+    , toModel : Model -> model
+    }
+    -> Update model msg
+update { msg, model, toMsg, toModel } =
+    Update.map toModel toMsg <|
+        case msg of
+            AnimationFrame timestamp ->
+                { model | lastTickTime = timestamp }
+                    |> tick (timeDelta model timestamp)
 
-        Event timestamp event ->
-            model
-                |> applyEvent event
-                |> tick (timeDelta model timestamp)
+            Event timestamp event ->
+                model
+                    |> applyEvent event
+                    |> tick (timeDelta model timestamp)
 
-        DebugTrackPathToggled visible ->
-            let
-                debugFlags =
-                    model.debugFlags
-            in
-            { model
-                | debugFlags =
-                    { debugFlags
-                        | trackPathVisible = visible
-                    }
-            }
-                |> redrawTrackGeometry
-                |> Update.save
-
-        DebugTrackPathDownDirectionToggled visible ->
-            let
-                debugFlags =
-                    model.debugFlags
-            in
-            { model
-                | debugFlags =
-                    { debugFlags
-                        | trackPathDownDirectionVisible = visible
-                    }
-            }
-                |> redrawTrackGeometry
-                |> Update.save
-
-        DebugTunnelToggled visible ->
-            let
-                debugFlags =
-                    model.debugFlags
-            in
-            { model
-                | debugFlags =
-                    { debugFlags
-                        | tunnelVisible = visible
-                    }
-            }
-                |> redrawTrackGeometry
-                |> Update.save
-
-        PointerDown activeControlPoint ->
-            { model
-                | movingControlPoint = Just activeControlPoint
-            }
-                |> Update.save
-
-        PointerMove index point ->
-            case model.movingControlPoint of
-                Nothing ->
-                    model
-                        |> Update.save
-
-                Just movingControlPoint ->
-                    if index == movingControlPoint.index then
-                        let
-                            viewSize =
-                                { width = 800
-                                , height = 600
-                                }
-
-                            camera : Camera3d Meters Coordinates.World
-                            camera =
-                                Camera3d.perspective
-                                    { viewpoint =
-                                        Viewpoint3d.lookAt
-                                            { eyePoint = model.camera.center
-                                            , focalPoint =
-                                                model.camera.center
-                                                    |> Point3d.translateIn model.camera.forward (Length.meters 1)
-                                            , upDirection = Direction3d.positiveZ
-                                            }
-                                    , verticalFieldOfView = Angle.degrees 30
-                                    }
-
-                            screenRectangle : Rectangle2d Pixels Coordinates.Screen
-                            screenRectangle =
-                                Point2d.pixels viewSize.width 0
-                                    |> Rectangle2d.from (Point2d.pixels 0 viewSize.height)
-
-                            newMovingControlPoint =
-                                { movingControlPoint | point = point }
-                        in
-                        { model
-                            | movingControlPoint = Just newMovingControlPoint
-                            , track =
-                                Track.moveControlPoint
-                                    { debugFlags = model.debugFlags
-                                    , movingControlPoint = newMovingControlPoint
-                                    , camera = camera
-                                    , screenRectangle = screenRectangle
-                                    }
-                                    model.track
+            DebugTrackPathToggled visible ->
+                let
+                    debugFlags =
+                        model.debugFlags
+                in
+                { model
+                    | debugFlags =
+                        { debugFlags
+                            | trackPathVisible = visible
                         }
-                            |> Update.save
+                }
+                    |> redrawTrackGeometry
+                    |> Update.save
 
-                    else
+            DebugTrackPathDownDirectionToggled visible ->
+                let
+                    debugFlags =
+                        model.debugFlags
+                in
+                { model
+                    | debugFlags =
+                        { debugFlags
+                            | trackPathDownDirectionVisible = visible
+                        }
+                }
+                    |> redrawTrackGeometry
+                    |> Update.save
+
+            DebugTunnelToggled visible ->
+                let
+                    debugFlags =
+                        model.debugFlags
+                in
+                { model
+                    | debugFlags =
+                        { debugFlags
+                            | tunnelVisible = visible
+                        }
+                }
+                    |> redrawTrackGeometry
+                    |> Update.save
+
+            PointerDown activeControlPoint ->
+                { model
+                    | movingControlPoint = Just activeControlPoint
+                }
+                    |> Update.save
+
+            PointerMove index point ->
+                case model.movingControlPoint of
+                    Nothing ->
                         model
                             |> Update.save
 
-        PointerUp _ ->
-            { model | movingControlPoint = Nothing }
-                |> Update.save
+                    Just movingControlPoint ->
+                        if index == movingControlPoint.index then
+                            let
+                                viewSize =
+                                    { width = 800
+                                    , height = 600
+                                    }
+
+                                camera : Camera3d Meters Coordinates.World
+                                camera =
+                                    Camera3d.perspective
+                                        { viewpoint =
+                                            Viewpoint3d.lookAt
+                                                { eyePoint = model.camera.center
+                                                , focalPoint =
+                                                    model.camera.center
+                                                        |> Point3d.translateIn model.camera.forward (Length.meters 1)
+                                                , upDirection = Direction3d.positiveZ
+                                                }
+                                        , verticalFieldOfView = Angle.degrees 30
+                                        }
+
+                                screenRectangle : Rectangle2d Pixels Coordinates.Screen
+                                screenRectangle =
+                                    Point2d.pixels viewSize.width 0
+                                        |> Rectangle2d.from (Point2d.pixels 0 viewSize.height)
+
+                                newMovingControlPoint =
+                                    { movingControlPoint | point = point }
+                            in
+                            { model
+                                | movingControlPoint = Just newMovingControlPoint
+                                , track =
+                                    Track.moveControlPoint
+                                        { debugFlags = model.debugFlags
+                                        , movingControlPoint = newMovingControlPoint
+                                        , camera = camera
+                                        , screenRectangle = screenRectangle
+                                        }
+                                        model.track
+                            }
+                                |> Update.save
+
+                        else
+                            model
+                                |> Update.save
+
+            PointerUp _ ->
+                { model | movingControlPoint = Nothing }
+                    |> Update.save
 
 
 redrawTrackGeometry : Model -> Model

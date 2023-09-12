@@ -211,17 +211,18 @@ type Direction
     = CounterClockwise
 
 
-update : Msg -> Model -> Update Model Msg
-update msg model =
-    case msg of
-        AnimationFrame timestamp ->
-            { model | lastTickTime = timestamp }
-                |> tick (timeDelta model timestamp)
+update : { msg : Msg, model : Model, toMsg : Msg -> msg, toModel : Model -> model } -> Update model msg
+update { msg, model, toMsg, toModel } =
+    Update.map toModel toMsg <|
+        case msg of
+            AnimationFrame timestamp ->
+                { model | lastTickTime = timestamp }
+                    |> tick (timeDelta model timestamp)
 
-        Event timestamp event ->
-            { model | lastTickTime = timestamp }
-                |> applyEvent event
-                |> tick (timeDelta model timestamp)
+            Event timestamp event ->
+                { model | lastTickTime = timestamp }
+                    |> applyEvent event
+                    |> tick (timeDelta model timestamp)
 
 
 timeDelta : Model -> Time.Posix -> Duration

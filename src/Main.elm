@@ -67,9 +67,12 @@ update msg model =
         TrackEditor trackModel ->
             case msg of
                 TrackEditorMessage trackMsg ->
-                    TrackEditor.update trackMsg trackModel
-                        |> Update.mapModel TrackEditor
-                        |> Update.mapMsg TrackEditorMessage
+                    TrackEditor.update
+                        { msg = trackMsg
+                        , model = trackModel
+                        , toModel = TrackEditor
+                        , toMsg = TrackEditorMessage
+                        }
 
                 _ ->
                     model
@@ -78,9 +81,12 @@ update msg model =
         Racing raceModel ->
             case msg of
                 RaceMessage raceMsg ->
-                    Race.update raceMsg raceModel
-                        |> Update.mapModel Racing
-                        |> Update.mapMsg RaceMessage
+                    Race.update
+                        { msg = raceMsg
+                        , model = raceModel
+                        , toModel = Racing
+                        , toMsg = RaceMessage
+                        }
 
                 _ ->
                     model
