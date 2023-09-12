@@ -64,7 +64,6 @@ type Msg
 
 type Effect
     = TrackEditorEffect TrackEditor.Effect
-    | RaceEffect Race.Effect
 
 
 update : Msg -> Model -> Update Model Msg Effect
@@ -100,7 +99,7 @@ applyTrackEditorEffects effect =
     case effect of
         TrackEditor.TestTrack track ->
             Update.andThen
-                (\model ->
+                (\_ ->
                     Race.init track
                         |> Update.mapModel Racing
                         |> Update.mapMsg RaceMessage

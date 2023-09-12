@@ -1,6 +1,5 @@
 module Shape exposing
     ( Shape
-    , custom
     , decode
     , encode
     , newRegular

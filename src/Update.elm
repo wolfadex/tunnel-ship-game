@@ -100,14 +100,6 @@ applyEffects fn (Update update) =
         update.effects
 
 
-fromChild : (childMsg -> parentMsg) -> (childModel -> parentModel) -> (childEffect -> Update parentModel parentMsg parentEffect -> Update parentModel parentMsg parentEffect) -> Update childModel childMsg childEffect -> Update parentModel parentMsg parentEffect
-fromChild msgFn modelFn effectFn update =
-    update
-        |> mapModel modelFn
-        |> mapMsg msgFn
-        |> applyEffects effectFn
-
-
 complete : Update model msg effect -> ( model, Cmd msg )
 complete (Update update) =
     ( update.model, Cmd.batch update.cmds )

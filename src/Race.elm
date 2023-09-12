@@ -24,7 +24,6 @@ import Browser.Events
 import Camera3d
 import Color
 import Coordinates
-import CubicSpline3d
 import Direction3d
 import Duration exposing (Duration)
 import Frame3d
@@ -40,7 +39,6 @@ import Random
 import Scene3d
 import Scene3d.Material
 import Set exposing (Set)
-import Shape exposing (Shape)
 import SketchPlane3d
 import Speed exposing (Speed)
 import Task

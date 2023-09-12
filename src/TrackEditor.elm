@@ -7,8 +7,6 @@ module TrackEditor exposing
     , Model
     , Modifiers
     , Msg(..)
-    , decodeEvent
-    , decodeKeyDown
     , init
     , subscriptions
     , update
