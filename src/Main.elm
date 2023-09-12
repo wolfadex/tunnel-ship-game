@@ -37,11 +37,12 @@ type alias Flags =
     Float
 
 
-init : Flags -> Update Model Msg
+init : Flags -> Update Model Msg Effect
 init timeNow =
     TrackEditor.init timeNow
         |> Update.mapModel TrackEditor
         |> Update.mapMsg TrackEditorMessage
+        |> Update.applyEffects applyTrackEditorEffects
 
 
 subscriptions : Model -> Sub Msg
@@ -61,18 +62,21 @@ type Msg
     | TrackEditorMessage TrackEditor.Msg
 
 
-update : Msg -> Model -> Update Model Msg
+type Effect
+    = TrackEditorEffect TrackEditor.Effect
+    | RaceEffect Race.Effect
+
+
+update : Msg -> Model -> Update Model Msg Effect
 update msg model =
     case model of
         TrackEditor trackModel ->
             case msg of
                 TrackEditorMessage trackMsg ->
-                    TrackEditor.update
-                        { msg = trackMsg
-                        , model = trackModel
-                        , toModel = TrackEditor
-                        , toMsg = TrackEditorMessage
-                        }
+                    TrackEditor.update trackMsg trackModel
+                        |> Update.mapModel TrackEditor
+                        |> Update.mapMsg TrackEditorMessage
+                        |> Update.applyEffects applyTrackEditorEffects
 
                 _ ->
                     model
@@ -81,16 +85,32 @@ update msg model =
         Racing raceModel ->
             case msg of
                 RaceMessage raceMsg ->
-                    Race.update
-                        { msg = raceMsg
-                        , model = raceModel
-                        , toModel = Racing
-                        , toMsg = RaceMessage
-                        }
+                    Race.update raceMsg raceModel
+                        |> Update.mapModel Racing
+                        |> Update.mapMsg RaceMessage
+                        |> Update.applyEffects applyRaceEffects
 
                 _ ->
                     model
                         |> Update.save
+
+
+applyTrackEditorEffects : TrackEditor.Effect -> Update Model Msg Effect -> Update Model Msg Effect
+applyTrackEditorEffects effect =
+    case effect of
+        TrackEditor.TestTrack track ->
+            Update.andThen
+                (\model ->
+                    Race.init track
+                        |> Update.mapModel Racing
+                        |> Update.mapMsg RaceMessage
+                        |> Update.applyEffects applyRaceEffects
+                )
+
+
+applyRaceEffects : Race.Effect -> Update Model Msg Effect -> Update Model Msg Effect
+applyRaceEffects _ =
+    identity
 
 
 view : Model -> Browser.Document Msg

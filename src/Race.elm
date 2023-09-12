@@ -1,4 +1,20 @@
-module Race exposing (Direction(..), Event(..), Flags, Model, Msg(..), RadiansPerSecond, RadiansPerSecondSquared, RotationAcceleration, RotationSpeed, Ship, subscriptions, update, view)
+module Race exposing
+    ( Direction(..)
+    , Effect
+    , Event(..)
+    , Flags
+    , Model
+    , Msg(..)
+    , RadiansPerSecond
+    , RadiansPerSecondSquared
+    , RotationAcceleration
+    , RotationSpeed
+    , Ship
+    , init
+    , subscriptions
+    , update
+    , view
+    )
 
 import Acceleration exposing (Acceleration)
 import Angle exposing (Angle)
@@ -27,13 +43,19 @@ import Set exposing (Set)
 import Shape exposing (Shape)
 import SketchPlane3d
 import Speed exposing (Speed)
+import Task
 import Time
 import Track exposing (Track)
 import Update exposing (Update)
 import Viewpoint3d
 
 
-type alias Model =
+type Model
+    = Loading Track
+    | Loaded LoadedModel
+
+
+type alias LoadedModel =
     { ship : Ship
 
     -- , otherShips : List Ship
@@ -71,8 +93,8 @@ type alias RotationAcceleration =
     Quantity Float RadiansPerSecondSquared
 
 
-initShip : CubicSpline3d.Nondegenerate Meters Coordinates.World -> Shape Coordinates.World -> Ship
-initShip path shape =
+initShip : Ship
+initShip =
     { geometry =
         Block3d.centeredOn Frame3d.atOrigin
             ( Length.meters 0.5
@@ -89,80 +111,14 @@ initShip path shape =
 
 
 type alias Flags =
-    Float
+    Track
 
 
-init : Flags -> Update Model Msg
-init timeNow =
-    let
-        initialShape =
-            -- Shape.custom
-            Shape.newRegular 7
-
-        initialPath =
-            CubicSpline3d.fromControlPoints
-                (Point3d.xyz
-                    (Length.meters 0)
-                    (Length.meters 0)
-                    (Length.meters 2)
-                )
-                (Point3d.xyz
-                    (Length.meters 0)
-                    (Length.meters -20)
-                    (Length.meters 20)
-                )
-                (Point3d.xyz
-                    (Length.meters 0)
-                    (Length.meters 20)
-                    (Length.meters 20)
-                )
-                (Point3d.xyz
-                    (Length.meters 0)
-                    (Length.meters 10)
-                    (Length.meters 2)
-                )
-                |> CubicSpline3d.nondegenerate
-
-        carl a =
-            case initialPath of
-                Ok p ->
-                    p
-
-                Err _ ->
-                    carl initialPath
-
-        path =
-            carl initialPath
-    in
-    { ship =
-        initShip path initialShape
-
-    -- , otherShips =
-    -- [ initialShape
-    --     |> Polygon2d.vertices
-    --     |> List.drop 1
-    --     |> List.take 2
-    --     |> to2Points
-    --     |> initShip
-    -- , initialShape
-    --     |> Polygon2d.vertices
-    --     |> List.drop 3
-    --     |> List.take 2
-    --     |> to2Points
-    --     |> initShip
-    -- , initialShape
-    --     |> Polygon2d.vertices
-    --     |> List.drop 5
-    --     |> List.take 2
-    --     |> to2Points
-    --     |> initShip
-    -- ]
-    , seed = Random.initialSeed 0
-    , keysDown = Set.empty
-    , track = Track.init initialShape Nothing
-    , lastTickTime = Time.millisToPosix (round timeNow)
-    }
+init : Flags -> Update Model Msg Effect
+init track =
+    Loading track
         |> Update.save
+        |> Update.withCmd (Time.now |> Task.perform CurrentTimeReceived)
 
 
 subscriptions : Model -> Sub Msg
@@ -200,6 +156,11 @@ decodeEvent decoder =
 type Msg
     = AnimationFrame Time.Posix
     | Event Time.Posix Event
+    | CurrentTimeReceived Time.Posix
+
+
+type alias Effect =
+    Never
 
 
 type Event
@@ -211,28 +172,61 @@ type Direction
     = CounterClockwise
 
 
-update : { msg : Msg, model : Model, toMsg : Msg -> msg, toModel : Model -> model } -> Update model msg
-update { msg, model, toMsg, toModel } =
-    Update.map toModel toMsg <|
-        case msg of
-            AnimationFrame timestamp ->
-                { model | lastTickTime = timestamp }
-                    |> tick (timeDelta model timestamp)
+update : Msg -> Model -> Update Model Msg Effect
+update msg model =
+    case msg of
+        CurrentTimeReceived timeNow ->
+            case model of
+                Loading track ->
+                    Loaded
+                        { ship = initShip
 
-            Event timestamp event ->
-                { model | lastTickTime = timestamp }
-                    |> applyEvent event
-                    |> tick (timeDelta model timestamp)
+                        -- , otherShips =
+                        -- [ initShip
+                        -- , initShip
+                        -- , initShip
+                        -- ]
+                        , seed = Random.initialSeed 0
+                        , keysDown = Set.empty
+                        , track = track
+                        , lastTickTime = timeNow
+                        }
+                        |> Update.save
+
+                Loaded _ ->
+                    model
+                        |> Update.save
+
+        AnimationFrame timestamp ->
+            case model of
+                Loading _ ->
+                    model
+                        |> Update.save
+
+                Loaded m ->
+                    { m | lastTickTime = timestamp }
+                        |> tick (timeDelta m timestamp)
+
+        Event timestamp event ->
+            case model of
+                Loading _ ->
+                    model
+                        |> Update.save
+
+                Loaded m ->
+                    { m | lastTickTime = timestamp }
+                        |> applyEvent event
+                        |> tick (timeDelta m timestamp)
 
 
-timeDelta : Model -> Time.Posix -> Duration
+timeDelta : LoadedModel -> Time.Posix -> Duration
 timeDelta model timestamp =
     (Time.posixToMillis timestamp - Time.posixToMillis model.lastTickTime)
         |> toFloat
         |> Duration.milliseconds
 
 
-applyEvent : Event -> Model -> Model
+applyEvent : Event -> LoadedModel -> LoadedModel
 applyEvent event model =
     case event of
         KeyDown key ->
@@ -246,16 +240,17 @@ applyEvent event model =
             }
 
 
-tick : Duration -> Model -> Update Model Msg
+tick : Duration -> LoadedModel -> Update Model Msg Effect
 tick deltaTime model =
     model
         |> Update.save
         |> rotateShip deltaTime
         -- |> moveEnemies deltaTime
         |> moveShip deltaTime
+        |> Update.mapModel Loaded
 
 
-moveShip : Duration -> Update Model Msg -> Update Model Msg
+moveShip : Duration -> Update LoadedModel Msg Effect -> Update LoadedModel Msg Effect
 moveShip deltaTime =
     Update.mapModel
         (\model ->
@@ -290,7 +285,7 @@ moveShip deltaTime =
         )
 
 
-rotateShip : Duration -> Update Model Msg -> Update Model Msg
+rotateShip : Duration -> Update LoadedModel Msg Effect -> Update LoadedModel Msg Effect
 rotateShip deltaTime =
     Update.mapModel
         (\model ->
@@ -321,6 +316,16 @@ rotateShip deltaTime =
 
 view : Model -> List (Html Msg)
 view model =
+    case model of
+        Loading _ ->
+            [ Html.text "loading..." ]
+
+        Loaded m ->
+            viewLoaded m
+
+
+viewLoaded : LoadedModel -> List (Html Msg)
+viewLoaded model =
     let
         ( focalPoint, _ ) =
             model.ship.distance
