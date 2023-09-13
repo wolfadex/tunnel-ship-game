@@ -81,7 +81,7 @@ init timeNow =
         initialShape : Shape Coordinates.World
         initialShape =
             -- Shape.custom
-            Shape.newRegular 22
+            Shape.newRegular 5
 
         debugFlags : DebugFlags
         debugFlags =
