@@ -1,18 +1,26 @@
 module Track exposing
     ( ActiveControlPoint
+    , LengthError(..)
+    , Potential
+    , PotentialError(..)
     , Track
     , decode
     , encode
+    , fromPotential
     , init
     , length
     , moveControlPoint
     , newDebugFlags
+    , potentialLength
     , sample
+    , sampleTrackAt
     , sketchPlaneAt
     , view
     , viewControlPoints
+    , viewPotential
     )
 
+import Arc3d exposing (Arc3d)
 import Axis3d
 import Camera3d exposing (Camera3d)
 import Circle2d
@@ -22,6 +30,7 @@ import CubicSpline3d exposing (CubicSpline3d)
 import DebugFlags exposing (DebugFlags)
 import Direction3d exposing (Direction3d)
 import Frame2d exposing (Frame2d)
+import Frame3d exposing (Frame3d)
 import Geometry.Svg
 import Html exposing (Html)
 import Html.Attributes
@@ -48,24 +57,72 @@ import Svg exposing (Svg)
 import Svg.Attributes
 import Svg.Events
 import Util.Point3d
+import Util.Result
 import Vector3d exposing (Vector3d)
 import Visible exposing (Visible)
 
 
-type Track
-    = Track Internal
+type Potential
+    = Potential Internal
 
 
 type alias Internal =
-    { shape : Shape Coordinates.World
+    { shape : Shape Coordinates.Flat
     , controlPoints : List (Point3d Meters Coordinates.World)
     , knots : List Float
     , geometry : Scene3d.Entity Coordinates.World
     }
 
 
-encode : Track -> Json.Encode.Value
-encode (Track track) =
+type Track
+    = Track InternalTrack
+
+
+type alias InternalTrack =
+    { shape : Shape Coordinates.Flat
+    , segments :
+        ( CubicSpline3d.Nondegenerate Meters Coordinates.World
+        , List (CubicSpline3d.Nondegenerate Meters Coordinates.World)
+        )
+    , geometry : Scene3d.Entity Coordinates.World
+    }
+
+
+type PotentialError
+    = PENotNondegenerate (Point3d Meters Coordinates.World)
+    | ZeroSegments
+
+
+fromPotential : Potential -> Result PotentialError Track
+fromPotential (Potential potential) =
+    potential.controlPoints
+        |> CubicSpline3d.bSplineSegments potential.knots
+        |> List.map CubicSpline3d.nondegenerate
+        |> Util.Result.combine
+        |> Result.mapError PENotNondegenerate
+        |> Result.andThen
+            (\segments ->
+                case segments of
+                    [] ->
+                        Err ZeroSegments
+
+                    first :: rest ->
+                        { shape = potential.shape
+                        , segments = ( first, rest )
+                        , geometry =
+                            createTrackGeometry
+                                potential.knots
+                                Nothing
+                                potential.shape
+                                potential.controlPoints
+                        }
+                            |> Track
+                            |> Ok
+            )
+
+
+encode : Potential -> Json.Encode.Value
+encode (Potential track) =
     Json.Encode.object
         [ ( "shape", Shape.encode track.shape )
         , ( "controlPoints", encodeControlPoints track.controlPoints )
@@ -78,11 +135,11 @@ encodeControlPoints =
     Json.Encode.list (Util.Point3d.encode Length.inMeters)
 
 
-decode : Json.Decode.Decoder Track
+decode : Json.Decode.Decoder Potential
 decode =
     Json.Decode.map3
         (\shape controlPoints knots ->
-            Track
+            Potential
                 { shape = shape
                 , controlPoints = controlPoints
                 , knots = knots
@@ -99,7 +156,7 @@ decodeControlPoints =
     Json.Decode.list (Util.Point3d.decode Length.meters)
 
 
-init : Shape Coordinates.World -> Maybe DebugFlags -> Track
+init : Shape Coordinates.Flat -> Maybe DebugFlags -> Potential
 init shape debugFlags =
     let
         knots =
@@ -117,7 +174,7 @@ init shape debugFlags =
             , Point3d.meters 9 4 0
             ]
     in
-    Track
+    Potential
         { shape = shape
         , controlPoints = controlPoints
         , knots = knots
@@ -139,28 +196,18 @@ carlPath a =
             carlPath a
 
 
-createTrackGeometry : List Float -> Maybe DebugFlags -> Shape coordinates -> List (Point3d Meters coordinates) -> Scene3d.Entity coordinates
+createTrackGeometry : List Float -> Maybe DebugFlags -> Shape Coordinates.Flat -> List (Point3d Meters Coordinates.World) -> Scene3d.Entity Coordinates.World
 createTrackGeometry knots debugFlags initialShape controlPoints =
     let
-        arcLength : Float
-        arcLength =
-            controlPoints
-                |> CubicSpline3d.bSplineSegments knots
-                |> List.map
-                    (carlPath
-                        >> CubicSpline3d.arcLengthParameterized { maxError = Length.meters 0.01 }
-                        >> CubicSpline3d.arcLength
-                        >> Length.inKilometers
-                    )
-                |> List.sum
+        segmentsInt : Int
+        segmentsInt =
+            potentialLengthInternal { controlPoints = controlPoints, knots = knots }
+                |> Result.map (Length.inMeters >> Debug.log "meters" >> round)
+                |> Result.withDefault 0
 
         segmentsFloat : Float
         segmentsFloat =
-            arcLength * 1500
-
-        segmentsInt : Int
-        segmentsInt =
-            round segmentsFloat
+            toFloat segmentsInt
     in
     [ viewIfVisible
         (debugFlags
@@ -173,9 +220,20 @@ createTrackGeometry knots debugFlags initialShape controlPoints =
             |> Maybe.map .trackPathDownDirectionVisible
             |> Maybe.withDefault Visible.Visible
         )
-        [ createTrackDownGeometry knots controlPoints segmentsInt segmentsFloat ]
+        [ createTrackUpGeometry knots controlPoints segmentsInt segmentsFloat ]
     , List.range 0 segmentsInt
-        |> List.map (\i -> viewTunnelRing knots initialShape controlPoints (toFloat i / segmentsFloat))
+        |> List.map
+            (\i ->
+                let
+                    _ =
+                        Debug.log "tunnel ring" i
+                in
+                viewTunnelRing
+                    knots
+                    initialShape
+                    controlPoints
+                    (toFloat i |> Length.meters)
+            )
         |> viewIfVisible
             (debugFlags
                 |> Maybe.map .tunnelVisible
@@ -196,104 +254,73 @@ viewIfVisible visible entities =
             []
 
 
-createTrackPathGeometry : List Float -> List (Point3d Meters coordinates) -> Int -> Float -> Scene3d.Entity coordinates
-createTrackPathGeometry knots controlPoints segmentsInt segmentsFloat =
-    List.map2
-        (\knot segment ->
-            List.range 0 5
-                |> List.map
-                    (\i ->
-                        let
-                            dist =
-                                toFloat i / 5
+createTrackPathGeometry : List Float -> List (Point3d Meters Coordinates.World) -> Int -> Float -> Scene3d.Entity Coordinates.World
+createTrackPathGeometry knots controlPoints segmentsInt _ =
+    List.range 0 segmentsInt
+        |> List.map
+            (\i ->
+                let
+                    dist =
+                        i
+                            |> toFloat
+                            |> Length.meters
 
-                            ( point, dir ) =
-                                CubicSpline3d.sample segment dist
-
-                            vec : Vector3d Meters coordinates
-                            vec =
-                                dir
-                                    |> Vector3d.withLength (Length.meters 1)
-                                    |> Vector3d.scaleBy (1 / Interval.width knot)
-                                    |> Vector3d.scaleBy 0.5
-                        in
-                        LineSegment3d.from point
-                            (point
-                                |> Point3d.translateBy vec
-                            )
+                    ( point, frame ) =
+                        samplePotentialAtInternal knots controlPoints dist
+                in
+                LineSegment3d.from point
+                    (point
+                        |> Point3d.translateIn (Frame3d.xDirection frame) (Length.meters 1)
                     )
-        )
-        (CubicSpline3d.bSplineIntervals knots)
-        (CubicSpline3d.bSplineSegments knots controlPoints
-            |> List.map carlPath
-        )
-        |> List.concat
+            )
         |> Scene3d.Mesh.lineSegments
         |> Scene3d.mesh (Scene3d.Material.color Color.red)
 
 
-createTrackDownGeometry : List Float -> List (Point3d Meters coordinates) -> Int -> Float -> Scene3d.Entity coordinates
-createTrackDownGeometry knots controlPoints segmentsInt segmentsFloat =
-    sketchPlaneAtInternal knots controlPoints 555
+createTrackUpGeometry : List Float -> List (Point3d Meters Coordinates.World) -> Int -> Float -> Scene3d.Entity Coordinates.World
+createTrackUpGeometry knots controlPoints segmentsInt _ =
+    List.range 0 segmentsInt
         |> List.map
-            (\plane ->
+            (\i ->
                 let
-                    dir =
-                        plane
-                            |> SketchPlane3d.yDirection
+                    dist =
+                        i
+                            |> toFloat
+                            |> Length.meters
 
-                    p =
-                        plane
-                            |> SketchPlane3d.originPoint
+                    ( point, frame ) =
+                        samplePotentialAtInternal knots controlPoints dist
                 in
-                LineSegment3d.from p
-                    (p
-                        |> Point3d.translateIn dir (Length.meters 1)
+                LineSegment3d.from point
+                    (point
+                        |> Point3d.translateIn (Frame3d.xDirection frame) (Length.meters 1)
                     )
             )
         |> Scene3d.Mesh.lineSegments
         |> Scene3d.mesh (Scene3d.Material.color Color.green)
 
 
-viewTunnelRing : List Float -> Shape coordinates -> List (Point3d Meters coordinates) -> Float -> Scene3d.Entity coordinates
+viewTunnelRing : List Float -> Shape Coordinates.Flat -> List (Point3d Meters Coordinates.World) -> Length -> Scene3d.Entity Coordinates.World
 viewTunnelRing knots shape controlPoints dist =
     shape
         |> Polygon2d.edges
-        |> List.concatMap
-            (\ls ->
-                sketchPlaneAtInternal knots controlPoints dist
-                    |> List.map (\plane -> LineSegment3d.on plane ls)
+        |> List.map
+            (\segments ->
+                let
+                    ( _, frame ) =
+                        samplePotentialAtInternal knots controlPoints dist
+
+                    sketchPlan =
+                        Frame3d.xzSketchPlane frame
+                in
+                LineSegment3d.on sketchPlan segments
             )
         |> Scene3d.Mesh.lineSegments
         |> Scene3d.mesh (Scene3d.Material.color Color.lightPurple)
 
 
-sketchPlaneAtInternal : List Float -> List (Point3d Meters coordinates) -> Float -> List (SketchPlane3d Meters coordinates defines)
-sketchPlaneAtInternal knots controlPoints _ =
-    List.map2
-        (\knot segment ->
-            List.range 0 5
-                |> List.map
-                    (\i ->
-                        let
-                            dist =
-                                toFloat i / 5
-
-                            ( point, dir ) =
-                                CubicSpline3d.sample segment dist
-                        in
-                        SketchPlane3d.through point dir
-                    )
-        )
-        (CubicSpline3d.bSplineIntervals knots)
-        (CubicSpline3d.bSplineSegments knots controlPoints
-            |> List.map carlPath
-        )
-        |> List.concat
-
-
-sketchPlaneAt : Track -> Length -> SketchPlane3d Meters Coordinates.World defines
-sketchPlaneAt (Track track) dist =
+sketchPlaneAt : Potential -> Length -> SketchPlane3d Meters Coordinates.World defines
+sketchPlaneAt (Potential track) dist =
     -- let
     --     arcLength =
     --         CubicSpline3d.arcLengthParameterized
@@ -306,26 +333,131 @@ sketchPlaneAt (Track track) dist =
     Debug.todo ""
 
 
+samplePotentialAtInternal : List Float -> List (Point3d Meters Coordinates.World) -> Length -> ( Point3d Meters Coordinates.World, Frame3d Meters Coordinates.World defines )
+samplePotentialAtInternal knots controlPoints dist =
+    let
+        segmentsRes =
+            controlPoints
+                |> CubicSpline3d.bSplineSegments knots
+                |> List.map CubicSpline3d.nondegenerate
+                |> Util.Result.combine
+    in
+    case segmentsRes of
+        Err err ->
+            Debug.todo "samplePotentialAtInternal"
 
--- SketchPlane3d.unsafe
---     { originPoint = center
---     , xDirection =
---         Vector3d.cross
---             (Direction3d.positiveZ
---                 |> Direction3d.toVector
---             )
---             (normal
---                 |> Direction3d.toVector
---             )
---             |> Vector3d.direction
---             |> Maybe.withDefault Direction3d.positiveX
---     , yDirection = Direction3d.positiveZ
---     }
+        Ok [] ->
+            Debug.todo "samplePotentialAtInternal"
+
+        Ok (first :: rest) ->
+            let
+                segment =
+                    segmentForSample ( first, rest ) dist
+
+                before =
+                    dist
+                        |> Quantity.minus (Length.meters 0.01)
+                        |> CubicSpline3d.pointAlong segment
+
+                ( center, tangent ) =
+                    dist
+                        |> CubicSpline3d.sampleAlong segment
+
+                after =
+                    dist
+                        |> Quantity.plus (Length.meters 0.01)
+                        |> CubicSpline3d.pointAlong segment
+
+                frame =
+                    Arc3d.throughPoints before center after
+                        |> Maybe.map
+                            (\arc ->
+                                Frame3d.unsafe
+                                    { originPoint = center
+                                    , xDirection =
+                                        Direction3d.from center
+                                            (Arc3d.centerPoint arc)
+                                            |> Maybe.withDefault Direction3d.positiveX
+
+                                    -- |> Debug.todo "rotate around tangent some angle"
+                                    , yDirection = tangent
+                                    , zDirection = Arc3d.axialDirection arc
+                                    }
+                            )
+                        |> Maybe.withDefault Frame3d.atOrigin
+            in
+            ( center, frame )
 
 
-newDebugFlags : DebugFlags -> Track -> Track
-newDebugFlags debugFlags (Track track) =
-    Track
+segmentForSample : ( CubicSpline3d.Nondegenerate Meters Coordinates.World, List (CubicSpline3d.Nondegenerate Meters Coordinates.World) ) -> Length -> CubicSpline3d.ArcLengthParameterized Meters Coordinates.World
+segmentForSample ( next, rest ) dist =
+    let
+        arcLengthParam =
+            CubicSpline3d.arcLengthParameterized
+                { maxError = Length.meters 0.01 }
+                next
+
+        arcLength =
+            CubicSpline3d.arcLength arcLengthParam
+    in
+    -- TODO: All of the below will break if dist is negative
+    if dist |> Quantity.lessThanOrEqualTo arcLength then
+        arcLengthParam
+
+    else
+        case rest of
+            [] ->
+                segmentForSample ( next, rest ) (dist |> Quantity.minus arcLength)
+
+            first :: last ->
+                segmentForSample ( first, last ) (dist |> Quantity.minus arcLength)
+
+
+sampleTrackAt : Length -> Track -> ( Point3d Meters Coordinates.World, Frame3d Meters Coordinates.World defines )
+sampleTrackAt dist (Track track) =
+    let
+        segment =
+            dist
+                |> segmentForSample track.segments
+
+        before =
+            dist
+                |> Quantity.minus (Length.meters 0.01)
+                |> CubicSpline3d.pointAlong segment
+
+        ( center, tangent ) =
+            dist
+                |> CubicSpline3d.sampleAlong segment
+
+        after =
+            dist
+                |> Quantity.plus (Length.meters 0.01)
+                |> CubicSpline3d.pointAlong segment
+
+        frame =
+            Arc3d.throughPoints before center after
+                |> Maybe.map
+                    (\arc ->
+                        Frame3d.unsafe
+                            { originPoint = center
+                            , xDirection =
+                                Direction3d.from center
+                                    (Arc3d.centerPoint arc)
+                                    |> Maybe.withDefault Direction3d.positiveX
+
+                            -- |> Debug.todo "rotate around tangent some angle"
+                            , yDirection = tangent
+                            , zDirection = Arc3d.axialDirection arc
+                            }
+                    )
+                |> Maybe.withDefault Frame3d.atOrigin
+    in
+    ( center, frame )
+
+
+newDebugFlags : DebugFlags -> Potential -> Potential
+newDebugFlags debugFlags (Potential track) =
+    Potential
         { track
             | geometry = createTrackGeometry track.knots (Just debugFlags) track.shape track.controlPoints
         }
@@ -337,9 +469,9 @@ moveControlPoint :
     , camera : Camera3d Meters Coordinates.World
     , screenRectangle : Rectangle2d Pixels Coordinates.Screen
     }
-    -> Track
-    -> Track
-moveControlPoint { debugFlags, movingControlPoint, camera, screenRectangle } (Track track) =
+    -> Potential
+    -> Potential
+moveControlPoint { debugFlags, movingControlPoint, camera, screenRectangle } (Potential track) =
     let
         newControlPoints : List (Point3d Meters Coordinates.World)
         newControlPoints =
@@ -361,7 +493,7 @@ moveControlPoint { debugFlags, movingControlPoint, camera, screenRectangle } (Tr
                 )
                 track.controlPoints
     in
-    Track
+    Potential
         { track
             | controlPoints = newControlPoints
             , geometry = createTrackGeometry track.knots (Just debugFlags) track.shape newControlPoints
@@ -373,17 +505,50 @@ view (Track track) =
     track.geometry
 
 
+viewPotential : Potential -> Scene3d.Entity Coordinates.World
+viewPotential (Potential track) =
+    track.geometry
+
+
+type LengthError
+    = NotNondegenerate (Point3d Meters Coordinates.World)
+
+
+potentialLength : Potential -> Result LengthError Length
+potentialLength (Potential potential) =
+    potentialLengthInternal potential
+
+
+potentialLengthInternal : { a | controlPoints : List (Point3d Meters Coordinates.World), knots : List Float } -> Result LengthError Length
+potentialLengthInternal { controlPoints, knots } =
+    controlPoints
+        |> CubicSpline3d.bSplineSegments knots
+        |> List.map CubicSpline3d.nondegenerate
+        |> Util.Result.combine
+        |> Result.mapError NotNondegenerate
+        |> Result.map
+            (List.foldl
+                (CubicSpline3d.arcLengthParameterized { maxError = Length.meters 0.01 }
+                    >> CubicSpline3d.arcLength
+                    >> Quantity.plus
+                )
+                (Length.meters 0)
+            )
+
+
 length : Track -> Length
 length (Track track) =
-    track.controlPoints
-        |> CubicSpline3d.bSplineSegments track.knots
-        |> List.foldl
-            (carlPath
-                >> CubicSpline3d.arcLengthParameterized { maxError = Length.meters 0.01 }
-                >> CubicSpline3d.arcLength
-                >> Quantity.plus
-            )
-            (Length.meters 0)
+    let
+        ( first, rest ) =
+            track.segments
+    in
+    List.foldl
+        (CubicSpline3d.arcLengthParameterized { maxError = Length.meters 0.01 }
+            >> CubicSpline3d.arcLength
+            >> Quantity.plus
+        )
+        (Length.meters 0)
+        (first :: rest)
 
 
 
@@ -398,9 +563,9 @@ viewControlPoints :
     , onPointerUp : Int -> msg
     , onPointerMove : Int -> Point2d Pixels Coordinates.Screen -> msg
     }
-    -> Track
+    -> Potential
     -> Html msg
-viewControlPoints { viewSize, camera, movingControlPoint, onPointerDown, onPointerUp, onPointerMove } (Track track) =
+viewControlPoints { viewSize, camera, movingControlPoint, onPointerDown, onPointerUp, onPointerMove } (Potential track) =
     let
         -- Take the 3D model for the logo and rotate it by the current angle
         -- rotatedLogo =
@@ -609,8 +774,8 @@ type alias ActiveControlPoint =
     }
 
 
-sample : Track -> Length -> ( Point3d Meters Coordinates.World, Direction3d Coordinates.World )
-sample (Track track) dist =
+sample : Potential -> Length -> ( Point3d Meters Coordinates.World, Direction3d Coordinates.World )
+sample (Potential track) dist =
     -- let
     --     arcLength =
     --         CubicSpline3d.arcLengthParameterized

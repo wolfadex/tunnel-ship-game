@@ -1,11 +1,16 @@
 module Coordinates exposing
-    ( Screen
+    ( Flat
+    , Screen
     , World
     )
 
 
 type World
     = World Never
+
+
+type Flat
+    = Flat Never
 
 
 type Screen

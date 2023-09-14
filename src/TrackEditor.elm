@@ -40,7 +40,7 @@ import Set exposing (Set)
 import Shape exposing (Shape)
 import Speed
 import Time
-import Track exposing (Track)
+import Track
 import Update exposing (Update)
 import Util.Function
 import Viewpoint3d
@@ -51,7 +51,7 @@ type alias Model =
     { keysDown : Set String
     , modifiersDown : Modifiers
     , lastTickTime : Time.Posix
-    , track : Track
+    , track : Track.Potential
     , camera : EditorCamera
     , debugFlags : DebugFlags
     , movingControlPoint : Maybe Track.ActiveControlPoint
@@ -78,7 +78,7 @@ type alias Flags =
 init : Flags -> Update Model Msg Effect
 init timeNow =
     let
-        initialShape : Shape Coordinates.World
+        initialShape : Shape Coordinates.Flat
         initialShape =
             -- Shape.custom
             Shape.newRegular 5
@@ -169,7 +169,7 @@ type Msg
 
 
 type Effect
-    = TestTrack Track
+    = TestTrack Track.Track
 
 
 type Event
@@ -195,9 +195,14 @@ update msg model =
                 |> tick (timeDelta model timestamp)
 
         TestTrackClicked ->
-            model
-                |> Update.save
-                |> Update.withEffect (TestTrack model.track)
+            case Track.fromPotential model.track of
+                Err err ->
+                    Debug.todo ""
+
+                Ok track ->
+                    model
+                        |> Update.save
+                        |> Update.withEffect (TestTrack track)
 
         DebugTrackPathToggled visible ->
             let
@@ -502,7 +507,7 @@ view model =
         , clipDepth = Length.millimeters 0.1
         , background = Scene3d.backgroundColor Color.black
         , entities =
-            [ Track.view model.track
+            [ Track.viewPotential model.track
             , LineSegment3d.from
                 Point3d.origin
                 (Point3d.origin
@@ -528,9 +533,14 @@ view model =
     , Html.div
         []
         [ Html.span [ Html.Attributes.class "score" ]
-            [ ((Track.length model.track
-                    |> Length.inKilometers
-                    |> Numeral.format "0,0.000"
+            [ ((case Track.potentialLength model.track of
+                    Err (Track.NotNondegenerate _) ->
+                        "N/A"
+
+                    Ok length ->
+                        length
+                            |> Length.inKilometers
+                            |> Numeral.format "0,0.000"
                )
                 ++ " km"
               )

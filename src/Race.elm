@@ -326,21 +326,19 @@ viewLoaded : LoadedModel -> List (Html Msg)
 viewLoaded model =
     let
         ( focalPoint, _ ) =
-            model.ship.distance
-                |> Track.sample model.track
+            Track.sampleTrackAt model.ship.distance model.track
 
-        ( followPoint, _ ) =
-            model.ship.distance
-                |> Quantity.minus (Length.meters 4)
-                |> Track.sample model.track
-
-        sketchPlane =
-            Track.sketchPlaneAt model.track model.ship.distance
+        ( followPoint, frame ) =
+            Track.sampleTrackAt
+                (model.ship.distance
+                    |> Quantity.minus (Length.meters 4)
+                )
+                model.track
 
         upDir =
-            sketchPlane
-                |> SketchPlane3d.rotateAround (SketchPlane3d.normalAxis sketchPlane) model.ship.rotation
-                |> SketchPlane3d.yDirection
+            frame
+                |> Frame3d.rotateAround (Frame3d.xAxis frame) model.ship.rotation
+                |> Frame3d.yDirection
                 |> Direction3d.reverse
     in
     [ Scene3d.cloudy
@@ -405,29 +403,28 @@ viewLoaded model =
 viewShip : Point3d Meters Coordinates.World -> Track -> Ship -> Scene3d.Entity Coordinates.World
 viewShip focalPoint track ship =
     let
-        ( center, normal ) =
-            Track.sample track ship.distance
-
-        sketchPlane =
-            Track.sketchPlaneAt track ship.distance
-
-        downDir =
-            sketchPlane
-                |> SketchPlane3d.yDirection
+        ( center, frame ) =
+            Track.sampleTrackAt ship.distance track
 
         shipFinal =
             ship.geometry
-                |> Block3d.placeIn (SketchPlane3d.toFrame sketchPlane)
-                |> Block3d.translateIn downDir (Length.meters 0.75)
-                |> Block3d.rotateAround (Axis3d.through center normal) ship.rotation
+                |> Block3d.placeIn frame
+                |> Block3d.translateIn (Frame3d.zDirection frame) (Length.meters -0.75)
+                |> Block3d.rotateAround
+                    (frame
+                        |> Frame3d.xDirection
+                        |> Axis3d.through center
+                    )
+                    ship.rotation
     in
     Scene3d.group
         [ shipFinal
             |> Scene3d.block (Scene3d.Material.matte Color.green)
         , LineSegment3d.from
             (Block3d.centerPoint shipFinal)
-            (Block3d.centerPoint shipFinal
-                |> Point3d.translateIn normal (Length.meters 1)
+            (shipFinal
+                |> Block3d.centerPoint
+                |> Point3d.translateIn (Frame3d.xDirection frame) (Length.meters 1)
             )
             |> Scene3d.lineSegment (Scene3d.Material.color Color.red)
         ]
