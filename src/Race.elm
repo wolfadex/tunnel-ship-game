@@ -326,10 +326,10 @@ viewLoaded : LoadedModel -> List (Html Msg)
 viewLoaded model =
     let
         ( focalPoint, _ ) =
-            Track.sampleTrackAt model.ship.distance model.track
+            Track.sampleTrackWithFrame model.ship.distance model.track
 
         ( followPoint, frame ) =
-            Track.sampleTrackAt
+            Track.sampleTrackWithFrame
                 (model.ship.distance
                     |> Quantity.minus (Length.meters 4)
                 )
@@ -404,7 +404,7 @@ viewShip : Point3d Meters Coordinates.World -> Track -> Ship -> Scene3d.Entity C
 viewShip focalPoint track ship =
     let
         ( center, frame ) =
-            Track.sampleTrackAt ship.distance track
+            Track.sampleTrackWithFrame ship.distance track
 
         shipFinal =
             ship.geometry

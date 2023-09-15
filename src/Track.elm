@@ -13,8 +13,8 @@ module Track exposing
     , newDebugFlags
     , potentialLength
     , sample
-    , sampleTrackAt
-    , sketchPlaneAt
+    , sampleTrackWithFrame
+      -- , sketchPlaneAt
     , view
     , viewControlPoints
     , viewPotential
@@ -35,7 +35,6 @@ import Geometry.Svg
 import Html exposing (Html)
 import Html.Attributes
 import Interval
-import Util.Debug
 import Json.Decode
 import Json.Encode
 import Length exposing (Length, Meters)
@@ -57,6 +56,7 @@ import SketchPlane3d exposing (SketchPlane3d)
 import Svg exposing (Svg)
 import Svg.Attributes
 import Svg.Events
+import Util.Debug
 import Util.Point3d
 import Util.Result
 import Vector3d exposing (Vector3d)
@@ -267,7 +267,7 @@ createTrackPathGeometry knots controlPoints segmentsInt _ =
                 in
                 LineSegment3d.from point
                     (point
-                        |> Point3d.translateIn (Frame3d.xDirection frame) (Length.meters 1)
+                        |> Point3d.translateIn (Frame3d.yDirection frame) (Length.meters 1)
                     )
             )
         |> Scene3d.Mesh.lineSegments
@@ -301,13 +301,13 @@ viewTunnelRing : List Float -> Shape Coordinates.Flat -> List (Point3d Meters Co
 viewTunnelRing knots shape controlPoints dist =
     let
         ( _, frame ) =
-            samplePotentialAtInternal 
+            samplePotentialAtInternal
                 knots
                 controlPoints
-                ( dist)
+                dist
 
         sketchPlan =
-            Frame3d.xzSketchPlane (frame)
+            Frame3d.xzSketchPlane frame
     in
     shape
         |> Polygon2d.edges
@@ -386,7 +386,7 @@ samplePotentialAtInternal knots controlPoints dist =
             ( center, frame )
 
 
-pointAlong : ( CubicSpline3d.Nondegenerate Meters Coordinates.World, List (CubicSpline3d.Nondegenerate Meters Coordinates.World) ) -> Length -> ( Point3d Meters Coordinates.World )
+pointAlong : ( CubicSpline3d.Nondegenerate Meters Coordinates.World, List (CubicSpline3d.Nondegenerate Meters Coordinates.World) ) -> Length -> Point3d Meters Coordinates.World
 pointAlong segments dist =
     sampleAlong segments dist
         |> Tuple.first
@@ -402,10 +402,9 @@ sampleAlong ( next, rest ) dist =
 
         arcLength =
             CubicSpline3d.arcLength arcLengthParam
-
     in
     -- TODO: All of the below will break if dist is negative
-    if dist |> Quantity.lessThanOrEqualTo (arcLength) then
+    if dist |> Quantity.lessThanOrEqualTo arcLength then
         CubicSpline3d.sampleAlong arcLengthParam dist
 
     else
@@ -417,27 +416,21 @@ sampleAlong ( next, rest ) dist =
                 sampleAlong ( first, last ) (dist |> Quantity.minus arcLength)
 
 
-
-sampleTrackAt : Length -> Track -> ( Point3d Meters Coordinates.World, Frame3d Meters Coordinates.World defines )
-sampleTrackAt dist (Track track) =
+sampleTrackWithFrame : Length -> Track -> ( Point3d Meters Coordinates.World, Frame3d Meters Coordinates.World defines )
+sampleTrackWithFrame dist (Track track) =
     let
-        segment =
-            dist
-                |> segmentForSample track.segments
-
         before =
             dist
                 |> Quantity.minus (Length.meters 0.01)
-                |> CubicSpline3d.pointAlong segment
+                |> pointAlong track.segments
 
         ( center, tangent ) =
-            dist
-                |> CubicSpline3d.sampleAlong segment
+            sampleAlong track.segments dist
 
         after =
             dist
                 |> Quantity.plus (Length.meters 0.01)
-                |> CubicSpline3d.pointAlong segment
+                |> pointAlong track.segments
 
         frame =
             Arc3d.throughPoints before center after
