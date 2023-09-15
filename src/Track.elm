@@ -35,6 +35,7 @@ import Geometry.Svg
 import Html exposing (Html)
 import Html.Attributes
 import Interval
+import Util.Debug
 import Json.Decode
 import Json.Encode
 import Length exposing (Length, Meters)
@@ -224,15 +225,11 @@ createTrackGeometry knots debugFlags initialShape controlPoints =
     , List.range 0 segmentsInt
         |> List.map
             (\i ->
-                let
-                    _ =
-                        Debug.log "tunnel ring" i
-                in
                 viewTunnelRing
                     knots
                     initialShape
                     controlPoints
-                    (toFloat i |> Length.meters)
+                    (toFloat (Debug.log "tunnel ring" i) |> Length.meters)
             )
         |> viewIfVisible
             (debugFlags
@@ -302,17 +299,20 @@ createTrackUpGeometry knots controlPoints segmentsInt _ =
 
 viewTunnelRing : List Float -> Shape Coordinates.Flat -> List (Point3d Meters Coordinates.World) -> Length -> Scene3d.Entity Coordinates.World
 viewTunnelRing knots shape controlPoints dist =
+    let
+        ( _, frame ) =
+            samplePotentialAtInternal 
+                knots
+                controlPoints
+                ( dist)
+
+        sketchPlan =
+            Frame3d.xzSketchPlane (frame)
+    in
     shape
         |> Polygon2d.edges
         |> List.map
             (\segments ->
-                let
-                    ( _, frame ) =
-                        samplePotentialAtInternal knots controlPoints dist
-
-                    sketchPlan =
-                        Frame3d.xzSketchPlane frame
-                in
                 LineSegment3d.on sketchPlan segments
             )
         |> Scene3d.Mesh.lineSegments
@@ -351,22 +351,19 @@ samplePotentialAtInternal knots controlPoints dist =
 
         Ok (first :: rest) ->
             let
-                segment =
-                    segmentForSample ( first, rest ) dist
-
                 before =
                     dist
                         |> Quantity.minus (Length.meters 0.01)
-                        |> CubicSpline3d.pointAlong segment
+                        |> pointAlong ( first, rest )
 
                 ( center, tangent ) =
                     dist
-                        |> CubicSpline3d.sampleAlong segment
+                        |> sampleAlong ( first, rest )
 
                 after =
                     dist
                         |> Quantity.plus (Length.meters 0.01)
-                        |> CubicSpline3d.pointAlong segment
+                        |> pointAlong ( first, rest )
 
                 frame =
                     Arc3d.throughPoints before center after
@@ -389,8 +386,14 @@ samplePotentialAtInternal knots controlPoints dist =
             ( center, frame )
 
 
-segmentForSample : ( CubicSpline3d.Nondegenerate Meters Coordinates.World, List (CubicSpline3d.Nondegenerate Meters Coordinates.World) ) -> Length -> CubicSpline3d.ArcLengthParameterized Meters Coordinates.World
-segmentForSample ( next, rest ) dist =
+pointAlong : ( CubicSpline3d.Nondegenerate Meters Coordinates.World, List (CubicSpline3d.Nondegenerate Meters Coordinates.World) ) -> Length -> ( Point3d Meters Coordinates.World )
+pointAlong segments dist =
+    sampleAlong segments dist
+        |> Tuple.first
+
+
+sampleAlong : ( CubicSpline3d.Nondegenerate Meters Coordinates.World, List (CubicSpline3d.Nondegenerate Meters Coordinates.World) ) -> Length -> ( Point3d Meters Coordinates.World, Direction3d Coordinates.World )
+sampleAlong ( next, rest ) dist =
     let
         arcLengthParam =
             CubicSpline3d.arcLengthParameterized
@@ -399,18 +402,20 @@ segmentForSample ( next, rest ) dist =
 
         arcLength =
             CubicSpline3d.arcLength arcLengthParam
+
     in
     -- TODO: All of the below will break if dist is negative
-    if dist |> Quantity.lessThanOrEqualTo arcLength then
-        arcLengthParam
+    if dist |> Quantity.lessThanOrEqualTo (arcLength) then
+        CubicSpline3d.sampleAlong arcLengthParam dist
 
     else
         case rest of
             [] ->
-                segmentForSample ( next, rest ) (dist |> Quantity.minus arcLength)
+                sampleAlong ( next, rest ) (dist |> Quantity.minus arcLength)
 
             first :: last ->
-                segmentForSample ( first, last ) (dist |> Quantity.minus arcLength)
+                sampleAlong ( first, last ) (dist |> Quantity.minus arcLength)
+
 
 
 sampleTrackAt : Length -> Track -> ( Point3d Meters Coordinates.World, Frame3d Meters Coordinates.World defines )
