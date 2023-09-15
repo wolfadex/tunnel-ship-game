@@ -96,8 +96,8 @@ initShip =
     { geometry =
         Block3d.centeredOn Frame3d.atOrigin
             ( Length.meters 0.5
-            , Length.meters 0.125
             , Length.meters 1
+            , Length.meters 0.125
             )
     , speed = Speed.kilometersPerHour 0
     , acceleration = Acceleration.metersPerSecondSquared 40
@@ -337,9 +337,8 @@ viewLoaded model =
 
         upDir =
             frame
-                |> Frame3d.rotateAround (Frame3d.xAxis frame) model.ship.rotation
-                |> Frame3d.yDirection
-                |> Direction3d.reverse
+                |> Frame3d.rotateAround (Frame3d.yAxis frame) model.ship.rotation
+                |> Frame3d.zDirection
     in
     [ Scene3d.cloudy
         { dimensions = ( Pixels.int 800, Pixels.int 600 )
@@ -410,12 +409,7 @@ viewShip focalPoint track ship =
             ship.geometry
                 |> Block3d.placeIn frame
                 |> Block3d.translateIn (Frame3d.zDirection frame) (Length.meters -0.75)
-                |> Block3d.rotateAround
-                    (frame
-                        |> Frame3d.xDirection
-                        |> Axis3d.through center
-                    )
-                    ship.rotation
+                |> Block3d.rotateAround (Frame3d.yAxis frame) ship.rotation
     in
     Scene3d.group
         [ shipFinal

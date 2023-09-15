@@ -203,7 +203,7 @@ createTrackGeometry knots debugFlags initialShape controlPoints =
         segmentsInt : Int
         segmentsInt =
             potentialLengthInternal { controlPoints = controlPoints, knots = knots }
-                |> Result.map (Length.inMeters >> Debug.log "meters" >> round)
+                |> Result.map (Length.inMeters >> round)
                 |> Result.withDefault 0
 
         segmentsFloat : Float
@@ -222,6 +222,12 @@ createTrackGeometry knots debugFlags initialShape controlPoints =
             |> Maybe.withDefault Visible.Visible
         )
         [ createTrackUpGeometry knots controlPoints segmentsInt segmentsFloat ]
+    , viewIfVisible
+        (debugFlags
+            |> Maybe.map .trackPathDownDirectionVisible
+            |> Maybe.withDefault Visible.Visible
+        )
+        [ createTrackRightGeometry knots controlPoints segmentsInt segmentsFloat ]
     , List.range 0 segmentsInt
         |> List.map
             (\i ->
@@ -229,7 +235,7 @@ createTrackGeometry knots debugFlags initialShape controlPoints =
                     knots
                     initialShape
                     controlPoints
-                    (toFloat (Debug.log "tunnel ring" i) |> Length.meters)
+                    (toFloat i |> Length.meters)
             )
         |> viewIfVisible
             (debugFlags
@@ -271,7 +277,7 @@ createTrackPathGeometry knots controlPoints segmentsInt _ =
                     )
             )
         |> Scene3d.Mesh.lineSegments
-        |> Scene3d.mesh (Scene3d.Material.color Color.red)
+        |> Scene3d.mesh (Scene3d.Material.color Color.green)
 
 
 createTrackUpGeometry : List Float -> List (Point3d Meters Coordinates.World) -> Int -> Float -> Scene3d.Entity Coordinates.World
@@ -290,11 +296,34 @@ createTrackUpGeometry knots controlPoints segmentsInt _ =
                 in
                 LineSegment3d.from point
                     (point
+                        |> Point3d.translateIn (Frame3d.zDirection frame) (Length.meters 1)
+                    )
+            )
+        |> Scene3d.Mesh.lineSegments
+        |> Scene3d.mesh (Scene3d.Material.color Color.blue)
+
+
+createTrackRightGeometry : List Float -> List (Point3d Meters Coordinates.World) -> Int -> Float -> Scene3d.Entity Coordinates.World
+createTrackRightGeometry knots controlPoints segmentsInt _ =
+    List.range 0 segmentsInt
+        |> List.map
+            (\i ->
+                let
+                    dist =
+                        i
+                            |> toFloat
+                            |> Length.meters
+
+                    ( point, frame ) =
+                        samplePotentialAtInternal knots controlPoints dist
+                in
+                LineSegment3d.from point
+                    (point
                         |> Point3d.translateIn (Frame3d.xDirection frame) (Length.meters 1)
                     )
             )
         |> Scene3d.Mesh.lineSegments
-        |> Scene3d.mesh (Scene3d.Material.color Color.green)
+        |> Scene3d.mesh (Scene3d.Material.color Color.red)
 
 
 viewTunnelRing : List Float -> Shape Coordinates.Flat -> List (Point3d Meters Coordinates.World) -> Length -> Scene3d.Entity Coordinates.World
@@ -372,13 +401,23 @@ samplePotentialAtInternal knots controlPoints dist =
                                 Frame3d.unsafe
                                     { originPoint = center
                                     , xDirection =
-                                        Direction3d.from center
-                                            (Arc3d.centerPoint arc)
+                                        -- Direction3d.from center
+                                        --     (Arc3d.centerPoint arc)
+                                        --     |> Maybe.withDefault Direction3d.positiveX
+                                        -- |> Debug.todo "rotate around tangent some angle"
+                                        tangent
+                                            |> Direction3d.toVector
+                                            |> Vector3d.cross
+                                                (Direction3d.positiveZ
+                                                    |> Direction3d.toVector
+                                                )
+                                            |> Vector3d.direction
                                             |> Maybe.withDefault Direction3d.positiveX
-
-                                    -- |> Debug.todo "rotate around tangent some angle"
                                     , yDirection = tangent
-                                    , zDirection = Arc3d.axialDirection arc
+                                    , zDirection = Direction3d.positiveZ
+
+                                    -- Arc3d.axialDirection arc
+                                    -- |> Debug.todo "rotate around tangent some angle"
                                     }
                             )
                         |> Maybe.withDefault Frame3d.atOrigin
@@ -729,8 +768,7 @@ viewControlPoints { viewSize, camera, movingControlPoint, onPointerDown, onPoint
         , Svg.Attributes.class "track-editor-svg"
         ]
         [ controlPointSvgs
-
-        -- , segmentSvgs
+        , segmentSvgs
         ]
 
 
