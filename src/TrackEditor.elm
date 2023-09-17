@@ -1,4 +1,4 @@
-module TrackEditor exposing
+port module TrackEditor exposing
     ( Direction(..)
     , EditorCamera
     , Effect(..)
@@ -15,6 +15,7 @@ module TrackEditor exposing
 
 import Angle
 import Axis3d exposing (Axis3d)
+import Block3d exposing (Block3d)
 import Browser.Events
 import Camera3d exposing (Camera3d)
 import Color
@@ -22,6 +23,7 @@ import Coordinates
 import DebugFlags exposing (DebugFlags)
 import Direction3d exposing (Direction3d)
 import Duration exposing (Duration)
+import Frame3d exposing (Frame3d)
 import Html exposing (Html)
 import Html.Attributes
 import Html.Events
@@ -40,7 +42,7 @@ import Set exposing (Set)
 import Shape exposing (Shape)
 import Speed
 import Time
-import Track
+import Track exposing (Track)
 import Update exposing (Update)
 import Util.Function
 import Viewpoint3d
@@ -51,7 +53,10 @@ type alias Model =
     { keysDown : Set String
     , modifiersDown : Modifiers
     , lastTickTime : Time.Posix
-    , track : Track.Potential
+    , potentialTrack : Track.Potential
+    , trackPreview : Maybe Track.Track
+    , previewShipDistance : Length
+    , previewShipGeometry : Block3d Meters Coordinates.World
     , camera : EditorCamera
     , debugFlags : DebugFlags
     , movingControlPoint : Maybe Track.ActiveControlPoint
@@ -89,6 +94,10 @@ init timeNow =
             , trackPathVisible = Visible.Visible
             , trackPathDownDirectionVisible = Visible.Visible
             }
+
+        potentialTrack : Track.Potential
+        potentialTrack =
+            Track.init initialShape (Just debugFlags)
     in
     { keysDown = Set.empty
     , modifiersDown = { shift = False, ctrl = False, alt = False }
@@ -103,7 +112,18 @@ init timeNow =
                 |> Direction3d.from center
                 |> Maybe.withDefault Direction3d.positiveX
         }
-    , track = Track.init initialShape (Just debugFlags)
+    , potentialTrack = Track.init initialShape (Just debugFlags)
+    , trackPreview =
+        potentialTrack
+            |> Track.fromPotential
+            |> Result.toMaybe
+    , previewShipDistance = Length.meters 0
+    , previewShipGeometry =
+        Block3d.centeredOn Frame3d.atOrigin
+            ( Length.meters 0.5
+            , Length.meters 1
+            , Length.meters 0.125
+            )
     , debugFlags = debugFlags
     , movingControlPoint = Nothing
     , lastTickTime = Time.millisToPosix (round timeNow)
@@ -127,8 +147,9 @@ subscriptions model =
 
 decodeKeyDown : Json.Decode.Decoder Msg
 decodeKeyDown =
-    Json.Decode.field "key" Json.Decode.string
-        |> Json.Decode.map KeyDown
+    Json.Decode.map2 KeyDown
+        (Json.Decode.field "key" Json.Decode.string)
+        (Json.Decode.field "code" Json.Decode.string)
         |> decodeEvent
 
 
@@ -142,8 +163,9 @@ decodeMouseMove =
 
 decodeKeyUp : Json.Decode.Decoder Msg
 decodeKeyUp =
-    Json.Decode.field "key" Json.Decode.string
-        |> Json.Decode.map KeyUp
+    Json.Decode.map2 KeyUp
+        (Json.Decode.field "key" Json.Decode.string)
+        (Json.Decode.field "code" Json.Decode.string)
         |> decodeEvent
 
 
@@ -173,8 +195,8 @@ type Effect
 
 
 type Event
-    = KeyDown String
-    | KeyUp String
+    = KeyDown String String
+    | KeyUp String String
     | MouseMove Float Float
 
 
@@ -195,15 +217,15 @@ update msg model =
                 |> tick (timeDelta model timestamp)
 
         TestTrackClicked ->
-            case Track.fromPotential model.track of
+            case Track.fromPotential model.potentialTrack of
                 Err err ->
                     Debug.todo ""
 
                 Ok track ->
                     model
                         |> Update.save
-                        |> Update.withEffect (TestTrack track)
 
+        -- |> Update.withEffect (TestTrack track)
         DebugTrackPathToggled visible ->
             let
                 debugFlags =
@@ -287,17 +309,24 @@ update msg model =
 
                             newMovingControlPoint =
                                 { movingControlPoint | point = point }
-                        in
-                        { model
-                            | movingControlPoint = Just newMovingControlPoint
-                            , track =
+
+                            newPotentialTrack : Track.Potential
+                            newPotentialTrack =
                                 Track.moveControlPoint
                                     { debugFlags = model.debugFlags
                                     , movingControlPoint = newMovingControlPoint
                                     , camera = camera
                                     , screenRectangle = screenRectangle
                                     }
-                                    model.track
+                                    model.potentialTrack
+                        in
+                        { model
+                            | movingControlPoint = Just newMovingControlPoint
+                            , potentialTrack = newPotentialTrack
+                            , trackPreview =
+                                newPotentialTrack
+                                    |> Track.fromPotential
+                                    |> Result.toMaybe
                         }
                             |> Update.save
 
@@ -313,7 +342,7 @@ update msg model =
 redrawTrackGeometry : Model -> Model
 redrawTrackGeometry model =
     { model
-        | track = Track.newDebugFlags model.debugFlags model.track
+        | potentialTrack = Track.newDebugFlags model.debugFlags model.potentialTrack
     }
 
 
@@ -329,11 +358,41 @@ tick deltaTime model =
     model
         |> Update.save
         |> moveCamera deltaTime
+        |> movePreviewShip deltaTime
+
+
+movePreviewShip : Duration -> Update Model Msg Effect -> Update Model Msg Effect
+movePreviewShip deltaTime =
+    Update.mapModel
+        (\model ->
+            case model.trackPreview of
+                Nothing ->
+                    model
+
+                Just trackPreview ->
+                    let
+                        previewShipDistance =
+                            Speed.kilometersPerHour 5
+                                |> Quantity.for deltaTime
+                                |> Quantity.plus model.previewShipDistance
+
+                        lengthOfTrack =
+                            Track.length trackPreview
+                    in
+                    { model
+                        | previewShipDistance =
+                            if previewShipDistance |> Quantity.greaterThan lengthOfTrack then
+                                Length.kilometers 0
+
+                            else
+                                previewShipDistance
+                    }
+        )
 
 
 moveCamera : Duration -> Update Model Msg Effect -> Update Model Msg Effect
 moveCamera deltaTime =
-    Update.mapModel
+    Update.andThen
         (\model ->
             let
                 camera =
@@ -375,67 +434,72 @@ moveCamera deltaTime =
                             in
                             camera.center
                                 -- Forward
-                                |> Util.Function.applyIf (Set.member "W" model.keysDown)
+                                |> Util.Function.applyIf (Set.member "KeyW" model.keysDown)
                                     (Point3d.translateIn camera.forward distance)
                                 -- Backward
-                                |> Util.Function.applyIf (Set.member "S" model.keysDown)
+                                |> Util.Function.applyIf (Set.member "KeyS" model.keysDown)
                                     (Point3d.translateIn camera.forward (Quantity.negate distance))
                                 -- Right
-                                |> Util.Function.applyIf (Set.member "D" model.keysDown)
+                                |> Util.Function.applyIf (Set.member "KeyD" model.keysDown)
                                     (Point3d.translateIn xDir distance)
                                 -- Left
-                                |> Util.Function.applyIf (Set.member "A" model.keysDown)
+                                |> Util.Function.applyIf (Set.member "KeyA" model.keysDown)
                                     (Point3d.translateIn xDir (Quantity.negate distance))
                                 -- Up
-                                |> Util.Function.applyIf (Set.member "E" model.keysDown)
+                                |> Util.Function.applyIf (Set.member "KeyE" model.keysDown)
                                     (Point3d.translateIn yDir distance)
                                 -- Down
-                                |> Util.Function.applyIf (Set.member "Q" model.keysDown)
+                                |> Util.Function.applyIf (Set.member "KeyQ" model.keysDown)
                                     (Point3d.translateIn yDir (Quantity.negate distance))
                     }
             }
+                |> Update.save
+         -- |> Update.withCmd (lockMouseToCanvas 5)
         )
+
+
+port lockMouseToCanvas : Bool -> Cmd msg
 
 
 applyEvent : Event -> Model -> Model
 applyEvent event model =
     case event of
-        KeyDown key ->
+        KeyDown _ keyCode ->
             let
                 modifiersDown =
                     model.modifiersDown
             in
             { model
-                | keysDown = Set.insert (String.toUpper key) model.keysDown
+                | keysDown = Set.insert keyCode model.keysDown
                 , modifiersDown =
-                    if key == "Shift" then
+                    if keyCode == "ShiftLeft" || keyCode == "ShiftRight" then
                         { modifiersDown | shift = True }
 
-                    else if key == "Control" then
+                    else if keyCode == "ControlLeft" || keyCode == "ControlRight" then
                         { modifiersDown | ctrl = True }
 
-                    else if key == "Alt" then
+                    else if keyCode == "AltLeft" || keyCode == "AltRight" then
                         { modifiersDown | alt = True }
 
                     else
                         modifiersDown
             }
 
-        KeyUp key ->
+        KeyUp _ keyCode ->
             let
                 modifiersDown =
                     model.modifiersDown
             in
             { model
-                | keysDown = Set.remove (String.toUpper key) model.keysDown
+                | keysDown = Set.remove keyCode model.keysDown
                 , modifiersDown =
-                    if key == "Shift" then
+                    if keyCode == "ShiftLeft" || keyCode == "ShiftRight" then
                         { modifiersDown | shift = False }
 
-                    else if key == "Control" then
+                    else if keyCode == "ControlLeft" || keyCode == "ControlRight" then
                         { modifiersDown | ctrl = False }
 
-                    else if key == "Alt" then
+                    else if keyCode == "AltLeft" || keyCode == "AltRight" then
                         { modifiersDown | alt = False }
 
                     else
@@ -500,40 +564,14 @@ view model =
                 , verticalFieldOfView = Angle.degrees 30
                 }
     in
-    [ Scene3d.cloudy
-        { dimensions = ( Pixels.int viewSize.width, Pixels.int viewSize.height )
-        , upDirection = Direction3d.negativeY
-        , camera = camera
-        , clipDepth = Length.millimeters 0.1
-        , background = Scene3d.backgroundColor Color.black
-        , entities =
-            [ Track.viewPotential model.track
-            , LineSegment3d.from
-                Point3d.origin
-                (Point3d.origin
-                    |> Point3d.translateIn Direction3d.positiveX (Length.meters 1)
-                )
-                |> Scene3d.lineSegment (Scene3d.Material.color Color.red)
-            , LineSegment3d.from
-                Point3d.origin
-                (Point3d.origin
-                    |> Point3d.translateIn Direction3d.positiveY (Length.meters 1)
-                )
-                |> Scene3d.lineSegment (Scene3d.Material.color Color.green)
-            , LineSegment3d.from
-                Point3d.origin
-                (Point3d.origin
-                    |> Point3d.translateIn Direction3d.positiveZ (Length.meters 1)
-                )
-                |> Scene3d.lineSegment (Scene3d.Material.color Color.blue)
-            ]
-        }
+    [ viewTrackEditorCanvas viewSize camera model
+    , viewTrackPreview viewSize model
 
     -- DEBUG
     , Html.div
         []
         [ Html.span [ Html.Attributes.class "score" ]
-            [ ((case Track.potentialLength model.track of
+            [ ((case Track.potentialLength model.potentialTrack of
                     Err (Track.NotNondegenerate _) ->
                         "N/A"
 
@@ -575,8 +613,110 @@ view model =
         , onPointerMove = PointerMove
         , onPointerUp = PointerUp
         }
-        model.track
+        model.potentialTrack
     , Html.button
         [ Html.Events.onClick TestTrackClicked ]
         [ Html.text "Test track" ]
     ]
+
+
+viewTrackEditorCanvas : { width : Int, height : Int } -> Camera3d Meters Coordinates.World -> Model -> Html Msg
+viewTrackEditorCanvas viewSize camera model =
+    Html.div [ Html.Attributes.id "editor-canvas" ]
+        [ Scene3d.cloudy
+            { dimensions = ( Pixels.int viewSize.width, Pixels.int viewSize.height )
+            , upDirection = Direction3d.negativeY
+            , camera = camera
+            , clipDepth = Length.millimeters 0.1
+            , background = Scene3d.backgroundColor Color.black
+            , entities =
+                [ Track.viewPotential model.potentialTrack
+                , LineSegment3d.from
+                    Point3d.origin
+                    (Point3d.origin
+                        |> Point3d.translateIn Direction3d.positiveX (Length.meters 1)
+                    )
+                    |> Scene3d.lineSegment (Scene3d.Material.color Color.red)
+                , LineSegment3d.from
+                    Point3d.origin
+                    (Point3d.origin
+                        |> Point3d.translateIn Direction3d.positiveY (Length.meters 1)
+                    )
+                    |> Scene3d.lineSegment (Scene3d.Material.color Color.green)
+                , LineSegment3d.from
+                    Point3d.origin
+                    (Point3d.origin
+                        |> Point3d.translateIn Direction3d.positiveZ (Length.meters 1)
+                    )
+                    |> Scene3d.lineSegment (Scene3d.Material.color Color.blue)
+                ]
+            }
+        ]
+
+
+viewTrackPreview : { width : Int, height : Int } -> Model -> Html Msg
+viewTrackPreview viewSize model =
+    case model.trackPreview of
+        Nothing ->
+            Html.text "Invalid track"
+
+        Just trackPreview ->
+            let
+                ( focalPoint, _ ) =
+                    Track.sampleTrackWithFrame model.previewShipDistance trackPreview
+
+                ( followPoint, frame ) =
+                    Track.sampleTrackWithFrame
+                        (model.previewShipDistance
+                            |> Quantity.minus (Length.meters 4)
+                        )
+                        trackPreview
+
+                upDir =
+                    frame
+                        |> Frame3d.zDirection
+            in
+            Scene3d.cloudy
+                { dimensions = ( Pixels.int (viewSize.width // 2), Pixels.int (viewSize.height // 2) )
+                , upDirection = Direction3d.negativeY
+                , camera =
+                    Camera3d.perspective
+                        { viewpoint =
+                            Viewpoint3d.lookAt
+                                { eyePoint = followPoint
+                                , focalPoint = focalPoint
+                                , upDirection = upDir
+                                }
+                        , verticalFieldOfView = Angle.degrees 30
+                        }
+                , clipDepth = Length.millimeters 0.1
+                , background = Scene3d.backgroundColor Color.black
+                , entities =
+                    [ Track.view trackPreview
+                    , viewShipPreview focalPoint trackPreview model.previewShipDistance model.previewShipGeometry
+                    ]
+                }
+
+
+viewShipPreview : Point3d Meters Coordinates.World -> Track -> Length -> Block3d Meters Coordinates.World -> Scene3d.Entity Coordinates.World
+viewShipPreview focalPoint track distance geometry =
+    let
+        ( center, frame ) =
+            Track.sampleTrackWithFrame distance track
+
+        shipFinal =
+            geometry
+                |> Block3d.placeIn frame
+                |> Block3d.translateIn (Frame3d.zDirection frame) (Length.meters -0.75)
+    in
+    Scene3d.group
+        [ shipFinal
+            |> Scene3d.block (Scene3d.Material.matte Color.green)
+        , LineSegment3d.from
+            (Block3d.centerPoint shipFinal)
+            (shipFinal
+                |> Block3d.centerPoint
+                |> Point3d.translateIn (Frame3d.xDirection frame) (Length.meters 1)
+            )
+            |> Scene3d.lineSegment (Scene3d.Material.color Color.red)
+        ]
