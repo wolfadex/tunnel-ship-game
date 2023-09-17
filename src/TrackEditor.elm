@@ -188,6 +188,7 @@ type Msg
     | PointerMove Int (Point2d Pixels Coordinates.Screen)
     | PointerUp Int
     | TestTrackClicked
+    | PreviewShipDistanceChanged String
 
 
 type Effect
@@ -266,6 +267,17 @@ update msg model =
                     }
             }
                 |> redrawTrackGeometry
+                |> Update.save
+
+        PreviewShipDistanceChanged str ->
+            let
+                previewShipDistance =
+                    str
+                        |> String.toFloat
+                        |> Maybe.map Length.kilometers
+                        |> Maybe.withDefault model.previewShipDistance
+            in
+            { model | previewShipDistance = previewShipDistance }
                 |> Update.save
 
         PointerDown activeControlPoint ->
@@ -565,58 +577,87 @@ view model =
                 }
     in
     [ viewTrackEditorCanvas viewSize camera model
-    , viewTrackPreview viewSize model
+    , Html.div [ Html.Attributes.style "display" "flex" ]
+        [ Html.div [ Html.Attributes.style "flex" "1" ]
+            [ Html.div
+                []
+                [ Html.span [ Html.Attributes.class "score" ]
+                    [ ((case Track.potentialLength model.potentialTrack of
+                            Err (Track.NotNondegenerate _) ->
+                                "N/A"
 
-    -- DEBUG
-    , Html.div
-        []
-        [ Html.span [ Html.Attributes.class "score" ]
-            [ ((case Track.potentialLength model.potentialTrack of
-                    Err (Track.NotNondegenerate _) ->
-                        "N/A"
-
-                    Ok length ->
-                        length
-                            |> Length.inKilometers
-                            |> Numeral.format "0,0.000"
-               )
-                ++ " km"
-              )
-                |> Html.text
+                            Ok length ->
+                                length
+                                    |> Length.inKilometers
+                                    |> Numeral.format "0,0.000"
+                       )
+                        ++ " km"
+                      )
+                        |> Html.text
+                    ]
+                ]
+            , Html.div
+                [ Html.Attributes.style "display" "flex"
+                , Html.Attributes.style "flex-direction" "column"
+                ]
+                [ Visible.view
+                    { label = "Track path visible"
+                    , value = model.debugFlags.trackPathVisible
+                    , onChange = DebugTrackPathToggled
+                    }
+                , Visible.view
+                    { label = "Track path down direction visible"
+                    , value = model.debugFlags.trackPathDownDirectionVisible
+                    , onChange = DebugTrackPathDownDirectionToggled
+                    }
+                , Visible.view
+                    { label = "Tunnel visible"
+                    , value = model.debugFlags.tunnelVisible
+                    , onChange = DebugTunnelToggled
+                    }
+                , Html.label []
+                    [ Html.text "Preview ship distance: "
+                    , Html.input
+                        [ Html.Attributes.type_ "range"
+                        , Html.Attributes.min "0"
+                        , Html.Attributes.max
+                            (model.potentialTrack
+                                |> Track.potentialLength
+                                |> Result.withDefault (Length.meters 0)
+                                |> Length.inKilometers
+                                |> String.fromFloat
+                            )
+                        , Html.Attributes.value
+                            (model.previewShipDistance
+                                |> Length.inKilometers
+                                |> String.fromFloat
+                            )
+                        , Html.Attributes.step
+                            (Length.meter
+                                |> Length.inKilometers
+                                |> String.fromFloat
+                            )
+                        , Html.Events.onInput PreviewShipDistanceChanged
+                        ]
+                        []
+                    ]
+                ]
+            , Track.viewControlPoints
+                { viewSize = viewSize
+                , camera = camera
+                , movingControlPoint = model.movingControlPoint
+                , onPointerDown = PointerDown
+                , onPointerMove = PointerMove
+                , onPointerUp = PointerUp
+                }
+                model.potentialTrack
             ]
+        , viewTrackPreview viewSize model
+
+        -- , Html.button
+        --     [ Html.Events.onClick TestTrackClicked ]
+        --     [ Html.text "Test track" ]
         ]
-    , Html.div
-        [ Html.Attributes.style "display" "flex"
-        , Html.Attributes.style "flex-direction" "column"
-        ]
-        [ Visible.view
-            { label = "Track path visible"
-            , value = model.debugFlags.trackPathVisible
-            , onChange = DebugTrackPathToggled
-            }
-        , Visible.view
-            { label = "Track path down direction visible"
-            , value = model.debugFlags.trackPathDownDirectionVisible
-            , onChange = DebugTrackPathDownDirectionToggled
-            }
-        , Visible.view
-            { label = "Tunnel visible"
-            , value = model.debugFlags.tunnelVisible
-            , onChange = DebugTunnelToggled
-            }
-        ]
-    , Track.viewControlPoints
-        { viewSize = viewSize
-        , camera = camera
-        , movingControlPoint = model.movingControlPoint
-        , onPointerDown = PointerDown
-        , onPointerMove = PointerMove
-        , onPointerUp = PointerUp
-        }
-        model.potentialTrack
-    , Html.button
-        [ Html.Events.onClick TestTrackClicked ]
-        [ Html.text "Test track" ]
     ]
 
 
