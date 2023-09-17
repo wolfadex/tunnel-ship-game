@@ -14,7 +14,6 @@ module Track exposing
     , potentialLength
     , sample
     , sampleTrackWithFrame
-      -- , sketchPlaneAt
     , view
     , viewControlPoints
     , viewPotential
@@ -385,7 +384,7 @@ samplePotentialAtInternal knots controlPoints dist =
                         |> Quantity.minus (Length.meters 0.01)
                         |> pointAlong ( first, rest )
 
-                ( center, tangent ) =
+                ( center, yDirection ) =
                     dist
                         |> sampleAlong ( first, rest )
 
@@ -398,26 +397,29 @@ samplePotentialAtInternal knots controlPoints dist =
                     Arc3d.throughPoints before center after
                         |> Maybe.map
                             (\arc ->
-                                Frame3d.unsafe
-                                    { originPoint = center
-                                    , xDirection =
-                                        -- Direction3d.from center
-                                        --     (Arc3d.centerPoint arc)
-                                        --     |> Maybe.withDefault Direction3d.positiveX
-                                        -- |> Debug.todo "rotate around tangent some angle"
-                                        tangent
+                                let
+                                    zDirection =
+                                        -- Direction3d.positiveZ
+                                        Arc3d.centerPoint arc
+                                            |> Direction3d.from center
+                                            |> Maybe.withDefault Direction3d.positiveZ
+
+                                    xDirection =
+                                        (Direction3d.positiveZ
                                             |> Direction3d.toVector
+                                        )
                                             |> Vector3d.cross
-                                                (Direction3d.positiveZ
+                                                (yDirection
                                                     |> Direction3d.toVector
                                                 )
                                             |> Vector3d.direction
                                             |> Maybe.withDefault Direction3d.positiveX
-                                    , yDirection = tangent
-                                    , zDirection = Direction3d.positiveZ
-
-                                    -- Arc3d.axialDirection arc
-                                    -- |> Debug.todo "rotate around tangent some angle"
+                                in
+                                Frame3d.unsafe
+                                    { originPoint = center
+                                    , xDirection = xDirection
+                                    , yDirection = yDirection
+                                    , zDirection = zDirection
                                     }
                             )
                         |> Maybe.withDefault Frame3d.atOrigin
