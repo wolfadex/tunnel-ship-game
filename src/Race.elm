@@ -18,7 +18,6 @@ module Race exposing
 
 import Acceleration exposing (Acceleration)
 import Angle exposing (Angle)
-import Axis3d
 import Block3d exposing (Block3d)
 import Browser.Events
 import Camera3d
@@ -39,7 +38,6 @@ import Random
 import Scene3d
 import Scene3d.Material
 import Set exposing (Set)
-import SketchPlane3d
 import Speed exposing (Speed)
 import Task
 import Time

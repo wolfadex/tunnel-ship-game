@@ -1,5 +1,6 @@
 port module TrackEditor exposing
     ( Direction(..)
+    , EditMode
     , EditorCamera
     , Effect(..)
     , Event(..)
@@ -23,7 +24,7 @@ import Coordinates
 import DebugFlags exposing (DebugFlags)
 import Direction3d exposing (Direction3d)
 import Duration exposing (Duration)
-import Frame3d exposing (Frame3d)
+import Frame3d
 import Html exposing (Html)
 import Html.Attributes
 import Html.Events
@@ -43,6 +44,7 @@ import Shape exposing (Shape)
 import Speed
 import Time
 import Track exposing (Track)
+import Track.Potential
 import Update exposing (Update)
 import Util.Function
 import Viewpoint3d
@@ -53,13 +55,13 @@ type alias Model =
     { keysDown : Set String
     , modifiersDown : Modifiers
     , lastTickTime : Time.Posix
-    , potentialTrack : Track.Potential
+    , potentialTrack : Track.Potential.Potential
     , trackPreview : Maybe Track.Track
     , previewShipDistance : Length
     , previewShipGeometry : Block3d Meters Coordinates.World
     , camera : EditorCamera
     , debugFlags : DebugFlags
-    , movingControlPoint : Maybe Track.ActiveControlPoint
+    , movingControlPoint : Maybe Track.Potential.ActiveControlPoint
     , editMode : EditMode
     }
 
@@ -102,9 +104,9 @@ init timeNow =
             , trackPathDownDirectionVisible = Visible.Visible
             }
 
-        potentialTrack : Track.Potential
+        potentialTrack : Track.Potential.Potential
         potentialTrack =
-            Track.init initialShape (Just debugFlags)
+            Track.Potential.init initialShape (Just debugFlags)
     in
     { keysDown = Set.empty
     , modifiersDown = { shift = False, ctrl = False, alt = False }
@@ -119,7 +121,7 @@ init timeNow =
                 |> Direction3d.from center
                 |> Maybe.withDefault Direction3d.positiveX
         }
-    , potentialTrack = Track.init initialShape (Just debugFlags)
+    , potentialTrack = potentialTrack
     , trackPreview =
         potentialTrack
             |> Track.fromPotential
@@ -228,10 +230,10 @@ update msg model =
 
         TestTrackClicked ->
             case Track.fromPotential model.potentialTrack of
-                Err err ->
+                Err _ ->
                     Debug.todo ""
 
-                Ok track ->
+                Ok _ ->
                     model
                         |> Update.save
 
@@ -335,11 +337,11 @@ update msg model =
                             newMovingControlPoint =
                                 { movingControlPoint | point = point }
 
-                            newPotentialTrack : Track.Potential
+                            newPotentialTrack : Track.Potential.Potential
                             newPotentialTrack =
                                 case model.editMode of
                                     MoveGlobal ->
-                                        Track.moveControlPoint
+                                        Track.Potential.moveControlPoint
                                             { debugFlags = model.debugFlags
                                             , movingControlPoint = newMovingControlPoint
                                             , camera = camera
@@ -351,7 +353,7 @@ update msg model =
                                         Debug.todo ""
 
                                     RotateLocal ->
-                                        Track.rotateControlPoint
+                                        Track.Potential.rotateControlPoint
                                             { debugFlags = model.debugFlags
                                             , movingControlPoint = newMovingControlPoint
                                             , previousControlPoint = movingControlPoint.point
@@ -382,7 +384,7 @@ update msg model =
 redrawTrackGeometry : Model -> Model
 redrawTrackGeometry model =
     { model
-        | potentialTrack = Track.newDebugFlags model.debugFlags model.potentialTrack
+        | potentialTrack = Track.Potential.newDebugFlags model.debugFlags model.potentialTrack
     }
 
 
@@ -610,8 +612,8 @@ view model =
             [ Html.div
                 []
                 [ Html.span [ Html.Attributes.class "score" ]
-                    [ ((case Track.potentialLength model.potentialTrack of
-                            Err (Track.NotNondegenerate _) ->
+                    [ ((case Track.Potential.length model.potentialTrack of
+                            Err (Track.Potential.NotNondegenerate _) ->
                                 "N/A"
 
                             Ok length ->
@@ -650,7 +652,7 @@ view model =
                         , Html.Attributes.min "0"
                         , Html.Attributes.max
                             (model.potentialTrack
-                                |> Track.potentialLength
+                                |> Track.Potential.length
                                 |> Result.withDefault (Length.meters 0)
                                 |> Length.inKilometers
                                 |> String.fromFloat
@@ -708,7 +710,7 @@ view model =
                         [ Html.text "Rotate Local" ]
                     ]
                 ]
-            , Track.viewControlPoints
+            , Track.Potential.viewControlPoints
                 { viewSize = viewSize
                 , camera = camera
                 , movingControlPoint = model.movingControlPoint
@@ -737,7 +739,7 @@ viewTrackEditorCanvas viewSize camera model =
             , clipDepth = Length.millimeters 0.1
             , background = Scene3d.backgroundColor Color.black
             , entities =
-                [ Track.viewPotential model.potentialTrack
+                [ Track.Potential.view model.potentialTrack
                 , LineSegment3d.from
                     Point3d.origin
                     (Point3d.origin
@@ -814,9 +816,6 @@ viewShipPreview focalPoint track distance geometry =
     let
         frame =
             Track.sample track distance
-
-        center =
-            Frame3d.originPoint frame
 
         shipFinal =
             geometry

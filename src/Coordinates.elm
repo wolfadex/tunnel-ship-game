@@ -1,5 +1,6 @@
 module Coordinates exposing
-    ( Flat
+    ( DefinesLocal
+    , Flat
     , Screen
     , World
     )
@@ -15,3 +16,7 @@ type Flat
 
 type Screen
     = Screen Never
+
+
+type alias DefinesLocal =
+    { defines : World }

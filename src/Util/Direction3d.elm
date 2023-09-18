@@ -6,7 +6,6 @@ module Util.Direction3d exposing
 import Direction3d exposing (Direction3d)
 import Json.Decode
 import Json.Encode
-import Quantity exposing (Quantity)
 
 
 encode : Direction3d coordinates -> Json.Encode.Value

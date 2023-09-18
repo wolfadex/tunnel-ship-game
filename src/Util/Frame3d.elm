@@ -3,11 +3,9 @@ module Util.Frame3d exposing
     , encode
     )
 
-import Direction3d
 import Frame3d exposing (Frame3d)
 import Json.Decode
 import Json.Encode
-import Point3d
 import Quantity exposing (Quantity)
 import Util.Direction3d
 import Util.Point3d
