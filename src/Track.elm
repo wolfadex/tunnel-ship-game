@@ -576,7 +576,6 @@ sampleAlong ( ( left, right ), rest ) dist =
                     |> Vector3d.direction
                     |> Maybe.withDefault Direction3d.positiveZ
             }
-            |> Debug.log "frame"
 
     else
         case rest of
@@ -650,33 +649,44 @@ moveControlPoint { debugFlags, movingControlPoint, camera, screenRectangle } (Po
 rotateControlPoint :
     { debugFlags : DebugFlags
     , movingControlPoint : ActiveControlPoint
+    , previousControlPoint : Point2d Pixels Coordinates.Screen
     , camera : Camera3d Meters Coordinates.World
     , screenRectangle : Rectangle2d Pixels Coordinates.Screen
     }
     -> Potential
     -> Potential
-rotateControlPoint { debugFlags, movingControlPoint, camera, screenRectangle } (Potential track) =
+rotateControlPoint { debugFlags, movingControlPoint, previousControlPoint, camera, screenRectangle } (Potential track) =
     let
         newControlPoints : List (Frame3d Meters Coordinates.World DefinesLocal)
         newControlPoints =
             List.indexedMap
                 (\i oldControlPoint ->
                     if movingControlPoint.index == i then
-                        movingControlPoint.point
-                            |> Camera3d.ray camera screenRectangle
-                            |> Axis3d.intersectionWithPlane movingControlPoint.plane
-                            |> Maybe.map
-                                (\p2 ->
-                                    let
-                                        angle =
-                                            oldControlPoint
-                                                |> Frame3d.originPoint
-                                                |> Point3d.distanceFrom p2
-                                                |> Length.inMeters
-                                                |> Angle.degrees
-                                    in
-                                    Frame3d.rotateAround movingControlPoint.rotationAxis angle oldControlPoint
-                                )
+                        let
+                            newCP =
+                                movingControlPoint.point
+                                    |> Camera3d.ray camera screenRectangle
+                                    |> Axis3d.intersectionWithPlane movingControlPoint.plane
+
+                            oldCP =
+                                previousControlPoint
+                                    |> Camera3d.ray camera screenRectangle
+                                    |> Axis3d.intersectionWithPlane movingControlPoint.plane
+                        in
+                        Maybe.map2
+                            (\newP oldP ->
+                                let
+                                    angle =
+                                        Point3d.signedDistanceAlong (Axis3d.moveTo oldP movingControlPoint.rotationAxis) newP
+                                            |> Length.inMeters
+                                            |> (*) 2
+                                            |> Debug.log "angle"
+                                            |> Angle.degrees
+                                in
+                                Frame3d.rotateAround movingControlPoint.rotationAxis angle oldControlPoint
+                            )
+                            newCP
+                            oldCP
                             |> Maybe.withDefault oldControlPoint
 
                     else

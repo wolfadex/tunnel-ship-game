@@ -354,6 +354,7 @@ update msg model =
                                         Track.rotateControlPoint
                                             { debugFlags = model.debugFlags
                                             , movingControlPoint = newMovingControlPoint
+                                            , previousControlPoint = movingControlPoint.point
                                             , camera = camera
                                             , screenRectangle = screenRectangle
                                             }
