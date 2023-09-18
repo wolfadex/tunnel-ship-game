@@ -60,7 +60,14 @@ type alias Model =
     , camera : EditorCamera
     , debugFlags : DebugFlags
     , movingControlPoint : Maybe Track.ActiveControlPoint
+    , editMode : EditMode
     }
+
+
+type EditMode
+    = MoveGlobal
+    | MoveLocal
+    | RotateLocal
 
 
 type alias Modifiers =
@@ -126,6 +133,7 @@ init timeNow =
             )
     , debugFlags = debugFlags
     , movingControlPoint = Nothing
+    , editMode = MoveGlobal
     , lastTickTime = Time.millisToPosix (round timeNow)
     }
         |> Update.save
@@ -189,6 +197,7 @@ type Msg
     | PointerUp Int
     | TestTrackClicked
     | PreviewShipDistanceChanged String
+    | EditModeChangeClicked EditMode
 
 
 type Effect
@@ -280,6 +289,10 @@ update msg model =
             { model | previewShipDistance = previewShipDistance }
                 |> Update.save
 
+        EditModeChangeClicked editMode ->
+            { model | editMode = editMode }
+                |> Update.save
+
         PointerDown activeControlPoint ->
             { model
                 | movingControlPoint = Just activeControlPoint
@@ -324,13 +337,27 @@ update msg model =
 
                             newPotentialTrack : Track.Potential
                             newPotentialTrack =
-                                Track.moveControlPoint
-                                    { debugFlags = model.debugFlags
-                                    , movingControlPoint = newMovingControlPoint
-                                    , camera = camera
-                                    , screenRectangle = screenRectangle
-                                    }
-                                    model.potentialTrack
+                                case model.editMode of
+                                    MoveGlobal ->
+                                        Track.moveControlPoint
+                                            { debugFlags = model.debugFlags
+                                            , movingControlPoint = newMovingControlPoint
+                                            , camera = camera
+                                            , screenRectangle = screenRectangle
+                                            }
+                                            model.potentialTrack
+
+                                    MoveLocal ->
+                                        Debug.todo ""
+
+                                    RotateLocal ->
+                                        Track.rotateControlPoint
+                                            { debugFlags = model.debugFlags
+                                            , movingControlPoint = newMovingControlPoint
+                                            , camera = camera
+                                            , screenRectangle = screenRectangle
+                                            }
+                                            model.potentialTrack
                         in
                         { model
                             | movingControlPoint = Just newMovingControlPoint
@@ -641,6 +668,44 @@ view model =
                         ]
                         []
                     ]
+                , Html.div []
+                    [ Html.button
+                        [ Html.Events.onClick (EditModeChangeClicked MoveGlobal)
+                        , Html.Attributes.attribute "aria-pressed" <|
+                            case model.editMode of
+                                MoveGlobal ->
+                                    "true"
+
+                                _ ->
+                                    "false"
+                        ]
+                        [ Html.text "Move Global" ]
+                    , Html.button
+                        [ Html.Events.onClick (EditModeChangeClicked MoveLocal)
+                        , Html.Attributes.attribute "aria-pressed" <|
+                            case model.editMode of
+                                MoveLocal ->
+                                    "true"
+
+                                _ ->
+                                    "false"
+                        ]
+                        [ Html.text "Move Local" ]
+                    , Html.button
+                        [ Html.Attributes.disabled True ]
+                        [ Html.text "Rotate Global" ]
+                    , Html.button
+                        [ Html.Events.onClick (EditModeChangeClicked RotateLocal)
+                        , Html.Attributes.attribute "aria-pressed" <|
+                            case model.editMode of
+                                RotateLocal ->
+                                    "true"
+
+                                _ ->
+                                    "false"
+                        ]
+                        [ Html.text "Rotate Local" ]
+                    ]
                 ]
             , Track.viewControlPoints
                 { viewSize = viewSize
@@ -703,15 +768,19 @@ viewTrackPreview viewSize model =
 
         Just trackPreview ->
             let
-                ( focalPoint, _ ) =
-                    Track.sampleTrackWithFrame model.previewShipDistance trackPreview
+                focalPoint =
+                    Track.sample trackPreview model.previewShipDistance
+                        |> Frame3d.originPoint
 
-                ( followPoint, frame ) =
-                    Track.sampleTrackWithFrame
+                frame =
+                    Track.sample
+                        trackPreview
                         (model.previewShipDistance
                             |> Quantity.minus (Length.meters 4)
                         )
-                        trackPreview
+
+                followPoint =
+                    Frame3d.originPoint frame
 
                 upDir =
                     frame
@@ -742,8 +811,11 @@ viewTrackPreview viewSize model =
 viewShipPreview : Point3d Meters Coordinates.World -> Track -> Length -> Block3d Meters Coordinates.World -> Scene3d.Entity Coordinates.World
 viewShipPreview focalPoint track distance geometry =
     let
-        ( center, frame ) =
-            Track.sampleTrackWithFrame distance track
+        frame =
+            Track.sample track distance
+
+        center =
+            Frame3d.originPoint frame
 
         shipFinal =
             geometry

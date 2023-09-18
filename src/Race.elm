@@ -325,19 +325,23 @@ view model =
 viewLoaded : LoadedModel -> List (Html Msg)
 viewLoaded model =
     let
-        ( focalPoint, _ ) =
-            Track.sampleTrackWithFrame model.ship.distance model.track
+        focalPoint =
+            Track.sample model.track model.ship.distance
+                |> Frame3d.originPoint
 
-        ( followPoint, frame ) =
-            Track.sampleTrackWithFrame
+        followFrame =
+            Track.sample
+                model.track
                 (model.ship.distance
                     |> Quantity.minus (Length.meters 4)
                 )
-                model.track
+
+        followPoint =
+            Frame3d.originPoint followFrame
 
         upDir =
-            frame
-                |> Frame3d.rotateAround (Frame3d.yAxis frame) model.ship.rotation
+            followFrame
+                |> Frame3d.rotateAround (Frame3d.yAxis followFrame) model.ship.rotation
                 |> Frame3d.zDirection
     in
     [ Scene3d.cloudy
@@ -402,8 +406,8 @@ viewLoaded model =
 viewShip : Point3d Meters Coordinates.World -> Track -> Ship -> Scene3d.Entity Coordinates.World
 viewShip focalPoint track ship =
     let
-        ( center, frame ) =
-            Track.sampleTrackWithFrame ship.distance track
+        frame =
+            Track.sample track ship.distance
 
         shipFinal =
             ship.geometry

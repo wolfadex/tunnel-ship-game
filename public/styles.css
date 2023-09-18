@@ -5,6 +5,11 @@ body {
     padding: 0;
 }
 
+button[aria-pressed="true"] {
+    background-color: cornflowerblue;
+    color: white;
+}
+
 .score {
     color: cornflowerblue;
     font-size: 2rem;
