@@ -61,6 +61,7 @@ type alias Model =
     , camera : EditorCamera
     , debugFlags : DebugFlags
     , movingControlPoint : Maybe Track.Potential.ActiveControlPoint
+    , showPreview : Bool
     }
 
 
@@ -138,6 +139,7 @@ init timeNow =
             )
     , debugFlags = debugFlags
     , movingControlPoint = Nothing
+    , showPreview = False
     , lastTickTime = Time.millisToPosix (round timeNow)
     }
         |> Update.save
@@ -443,7 +445,7 @@ tick deltaTime model =
     model
         |> Update.save
         |> moveCamera deltaTime
-        |> movePreviewShip deltaTime
+        |> Util.Function.applyIf model.showPreview (movePreviewShip deltaTime)
 
 
 movePreviewShip : Duration -> Update Model Msg Effect -> Update Model Msg Effect
@@ -762,19 +764,15 @@ view model =
                 { viewSize = viewSize
                 , camera = camera
                 , movingControlPoint = model.movingControlPoint
-
-                -- , onPointerDown = PointerDown
-                -- , onPointerMove = PointerMove
-                -- , onPointerUp = PointerUp
                 }
                 model.potentialTrack
                 |> Html.map TrackPotentialMsg
             ]
-        , viewTrackPreview viewSize model
+        , if model.showPreview then
+            viewTrackPreview viewSize model
 
-        -- , Html.button
-        --     [ Html.Events.onClick TestTrackClicked ]
-        --     [ Html.text "Test track" ]
+          else
+            Html.text ""
         ]
     ]
 

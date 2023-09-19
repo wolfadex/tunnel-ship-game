@@ -25,11 +25,13 @@ import Angle
 import Axis3d exposing (Axis3d)
 import Camera3d exposing (Camera3d)
 import Circle2d
+import Circle3d
 import Color
 import Coordinates
 import CubicSpline3d
 import DebugFlags exposing (DebugFlags)
 import Direction3d exposing (Direction3d)
+import Ellipse2d
 import Frame2d exposing (Frame2d)
 import Frame3d exposing (Frame3d)
 import Geometry.Svg
@@ -844,11 +846,10 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
             , index : Int
             , plane : Plane3d Meters Coordinates.World
             , dir : Direction3d Coordinates.World
-            , rotAxis : Axis3d Meters Coordinates.World
-            , segment : LineSegment2d Pixels Coordinates.Screen
+            , origin3d : Point3d Meters Coordinates.World
             }
             -> Svg Msg
-        viewControlPointMoveArm { color, index, plane, dir, rotAxis, segment } =
+        viewControlPointMoveArm { color, index, plane, dir, origin3d } =
             Geometry.Svg.lineSegment2d
                 ([ Svg.Attributes.stroke color
                  , Svg.Attributes.strokeWidth "4"
@@ -865,7 +866,7 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
                                 , point = point
                                 , direction = dir
                                 , plane = plane
-                                , rotationAxis = rotAxis
+                                , rotationAxis = Axis3d.through origin3d dir
                                 }
                         )
                     )
@@ -890,7 +891,81 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
                                 []
                        )
                 )
-                segment
+                -- segment
+                (LineSegment2d.from
+                    (origin3d
+                        |> Point3d.Projection.toScreenSpace camera screenRectangle
+                    )
+                    (Point3d.Projection.toScreenSpace camera
+                        screenRectangle
+                        (origin3d
+                            |> Point3d.translateIn dir (Length.meters 1)
+                        )
+                    )
+                )
+
+        viewControlPointRotationPanel :
+            { color : String
+            , index : Int
+            , plane : Plane3d Meters Coordinates.World
+            , dir : Direction3d Coordinates.World
+            , origin3d : Point3d Meters Coordinates.World
+            }
+            -> Svg Msg
+        viewControlPointRotationPanel { color, index, plane, dir, origin3d } =
+            Geometry.Svg.ellipticalArc2d
+                ([ Svg.Attributes.stroke color
+                 , Svg.Attributes.fill color
+                 , Svg.Attributes.class "track-editor-control-point-disc"
+
+                 -- TODO
+                 -- ([ Svg.Attributes.pointerEvents "all"
+                 , Svg.Events.on "pointerdown"
+                    (decodePointerDown
+                        (\pointerId point _ ->
+                            ContrlPointArmSelected
+                                { pointerId = pointerId
+                                , index = index
+                                , point = point
+                                , direction = dir
+                                , plane = plane
+                                , rotationAxis = Axis3d.through origin3d dir
+                                }
+                        )
+                    )
+                 , Svg.Events.on "pointerup" (decodePointerUp (ControlPointArmDeselected index))
+
+                 -- , Svg.Events.on "keydown" (decodeKeyDown index)
+                 -- ]
+                 -- )
+                 ]
+                    ++ (case movingControlPoint of
+                            Just details ->
+                                if details.index == index then
+                                    [ Svg.Attributes.style "cursor: grab"
+                                    , Html.Attributes.property "___capturePointer" details.pointerId
+                                    , Svg.Events.on "pointermove" (decodePointerMove PointerMoved index)
+                                    ]
+
+                                else
+                                    []
+
+                            Nothing ->
+                                []
+                       )
+                )
+                (Circle3d.withRadius
+                    (Length.meters 5)
+                    dir
+                    -- (Axis3d.direction rotAxis)
+                    origin3d
+                    |> Circle3d.projectInto
+                        (camera
+                            |> Camera3d.viewpoint
+                            |> Viewpoint3d.viewPlane
+                        )
+                    |> Ellipse2d.toEllipticalArc
+                )
 
         viewWhenSelected : (Point3d Meters Coordinates.World -> ControlFrame -> Svg Msg) -> Control -> Svg Msg
         viewWhenSelected fn control =
@@ -926,20 +1001,7 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
                         )
                             |> Plane3d.through originPoint
                     , dir = xDir
-                    , rotAxis =
-                        xDir
-                            |> Axis3d.through originPoint
-                    , segment =
-                        LineSegment2d.from
-                            (originPoint
-                                |> Point3d.Projection.toScreenSpace camera screenRectangle
-                            )
-                            (Point3d.Projection.toScreenSpace camera
-                                screenRectangle
-                                (originPoint
-                                    |> Point3d.translateIn xDir (Length.meters 1)
-                                )
-                            )
+                    , origin3d = originPoint
                     }
                 , let
                     yDir =
@@ -963,20 +1025,7 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
                         )
                             |> Plane3d.through originPoint
                     , dir = yDir
-                    , rotAxis =
-                        yDir
-                            |> Axis3d.through originPoint
-                    , segment =
-                        LineSegment2d.from
-                            (originPoint
-                                |> Point3d.Projection.toScreenSpace camera screenRectangle
-                            )
-                            (Point3d.Projection.toScreenSpace camera
-                                screenRectangle
-                                (originPoint
-                                    |> Point3d.translateIn yDir (Length.meters 1)
-                                )
-                            )
+                    , origin3d = originPoint
                     }
                 , let
                     zDir =
@@ -1000,20 +1049,84 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
                         )
                             |> Plane3d.through originPoint
                     , dir = zDir
-                    , rotAxis =
-                        zDir
-                            |> Axis3d.through originPoint
-                    , segment =
-                        LineSegment2d.from
-                            (originPoint
-                                |> Point3d.Projection.toScreenSpace camera screenRectangle
-                            )
-                            (Point3d.Projection.toScreenSpace camera
-                                screenRectangle
-                                (originPoint
-                                    |> Point3d.translateIn zDir (Length.meters 1)
-                                )
-                            )
+                    , origin3d = originPoint
+                    }
+                ]
+
+        viewRotationPanels : Int -> Point3d Meters Coordinates.World -> ControlFrame -> Svg Msg
+        viewRotationPanels index originPoint frame =
+            Svg.g []
+                [ let
+                    xDir =
+                        case model.editMode of
+                            ( _, Global ) ->
+                                Direction3d.positiveX
+
+                            ( _, Local ) ->
+                                Frame3d.xDirection frame
+                  in
+                  viewControlPointRotationPanel
+                    { color = "red"
+                    , index = index
+                    , plane =
+                        (case model.editMode of
+                            ( _, Global ) ->
+                                Direction3d.positiveZ
+
+                            ( _, Local ) ->
+                                Frame3d.zDirection frame
+                        )
+                            |> Plane3d.through originPoint
+                    , dir = xDir
+                    , origin3d = originPoint
+                    }
+                , let
+                    yDir =
+                        case model.editMode of
+                            ( _, Global ) ->
+                                Direction3d.positiveY
+
+                            ( _, Local ) ->
+                                Frame3d.yDirection frame
+                  in
+                  viewControlPointRotationPanel
+                    { color = "green"
+                    , index = index
+                    , plane =
+                        (case model.editMode of
+                            ( _, Global ) ->
+                                Direction3d.positiveZ
+
+                            ( _, Local ) ->
+                                Frame3d.zDirection frame
+                        )
+                            |> Plane3d.through originPoint
+                    , dir = yDir
+                    , origin3d = originPoint
+                    }
+                , let
+                    zDir =
+                        case model.editMode of
+                            ( _, Global ) ->
+                                Direction3d.positiveZ
+
+                            ( _, Local ) ->
+                                Frame3d.zDirection frame
+                  in
+                  viewControlPointRotationPanel
+                    { color = "blue"
+                    , index = index
+                    , plane =
+                        (case model.editMode of
+                            ( _, Global ) ->
+                                Direction3d.positiveX
+
+                            ( _, Local ) ->
+                                Frame3d.xDirection frame
+                        )
+                            |> Plane3d.through originPoint
+                    , dir = zDir
+                    , origin3d = originPoint
                     }
                 ]
 
@@ -1106,10 +1219,19 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
                                     toSelect
 
                                 Just selFrame ->
-                                    viewControlArms -1
-                                        -- index
-                                        (Frame3d.originPoint selFrame)
-                                        selFrame
+                                    (case model.editMode of
+                                        ( Move, _ ) ->
+                                            viewControlArms -1
+                                                -- index
+                                                (Frame3d.originPoint selFrame)
+                                                selFrame
+
+                                        ( Rotate, _ ) ->
+                                            viewRotationPanels -1
+                                                -- index
+                                                (Frame3d.originPoint selFrame)
+                                                selFrame
+                                    )
                                         :: toSelect
                             )
                    )

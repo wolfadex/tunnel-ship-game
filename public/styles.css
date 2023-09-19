@@ -46,6 +46,11 @@ button[aria-pressed="true"] {
     opacity: 1;
 }
 
+.track-editor-control-point-disc {
+    stroke-width: 4;
+    fill-opacity: 0.25;
+}
+
 .track-editor-label-ignore {
     pointer-events: none;
 }
