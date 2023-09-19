@@ -22,6 +22,7 @@ module Track.Potential exposing
     )
 
 import Angle
+import Arc3d
 import Axis3d exposing (Axis3d)
 import Camera3d exposing (Camera3d)
 import Circle2d
@@ -30,6 +31,7 @@ import Color
 import Coordinates
 import CubicSpline3d
 import DebugFlags exposing (DebugFlags)
+import Direction2d
 import Direction3d exposing (Direction3d)
 import Ellipse2d
 import Frame2d exposing (Frame2d)
@@ -41,18 +43,21 @@ import Json.Decode
 import Length exposing (Length, Meters)
 import LineSegment2d exposing (LineSegment2d)
 import LineSegment3d
+import LineSegment3d.Projection
 import Pixels exposing (Pixels)
 import Plane3d exposing (Plane3d)
 import Point2d exposing (Point2d)
 import Point3d exposing (Point3d)
 import Point3d.Projection
 import Polygon2d
+import Polyline3d
 import Quantity
 import Rectangle2d exposing (Rectangle2d)
 import Scene3d
 import Scene3d.Material
 import Scene3d.Mesh
 import Shape exposing (Shape)
+import SketchPlane3d
 import Svg exposing (Svg)
 import Svg.Attributes
 import Svg.Events
@@ -912,59 +917,56 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
             }
             -> Svg Msg
         viewControlPointRotationPanel { color, index, plane, dir, origin3d } =
-            Geometry.Svg.ellipticalArc2d
-                ([ Svg.Attributes.stroke color
-                 , Svg.Attributes.fill color
-                 , Svg.Attributes.class "track-editor-control-point-disc"
+            origin3d
+                |> Circle3d.withRadius (Length.meters 1) dir
+                |> Circle3d.toArc
+                |> Arc3d.segments 24
+                |> Polyline3d.segments
+                |> List.map
+                    (LineSegment3d.Projection.toScreenSpace camera screenRectangle
+                        >> Geometry.Svg.lineSegment2d
+                            ([ Svg.Attributes.stroke color
+                             , Svg.Attributes.fill color
+                             , Svg.Attributes.class "track-editor-control-point-disc"
 
-                 -- TODO
-                 -- ([ Svg.Attributes.pointerEvents "all"
-                 , Svg.Events.on "pointerdown"
-                    (decodePointerDown
-                        (\pointerId point _ ->
-                            ContrlPointArmSelected
-                                { pointerId = pointerId
-                                , index = index
-                                , point = point
-                                , direction = dir
-                                , plane = plane
-                                , rotationAxis = Axis3d.through origin3d dir
-                                }
-                        )
+                             -- TODO
+                             -- ([ Svg.Attributes.pointerEvents "all"
+                             , Svg.Events.on "pointerdown"
+                                (decodePointerDown
+                                    (\pointerId point _ ->
+                                        ContrlPointArmSelected
+                                            { pointerId = pointerId
+                                            , index = index
+                                            , point = point
+                                            , direction = dir
+                                            , plane = plane
+                                            , rotationAxis = Axis3d.through origin3d dir
+                                            }
+                                    )
+                                )
+                             , Svg.Events.on "pointerup" (decodePointerUp (ControlPointArmDeselected index))
+
+                             -- , Svg.Events.on "keydown" (decodeKeyDown index)
+                             -- ]
+                             -- )
+                             ]
+                                ++ (case movingControlPoint of
+                                        Just details ->
+                                            if details.index == index then
+                                                [ Svg.Attributes.style "cursor: grab"
+                                                , Html.Attributes.property "___capturePointer" details.pointerId
+                                                , Svg.Events.on "pointermove" (decodePointerMove PointerMoved index)
+                                                ]
+
+                                            else
+                                                []
+
+                                        Nothing ->
+                                            []
+                                   )
+                            )
                     )
-                 , Svg.Events.on "pointerup" (decodePointerUp (ControlPointArmDeselected index))
-
-                 -- , Svg.Events.on "keydown" (decodeKeyDown index)
-                 -- ]
-                 -- )
-                 ]
-                    ++ (case movingControlPoint of
-                            Just details ->
-                                if details.index == index then
-                                    [ Svg.Attributes.style "cursor: grab"
-                                    , Html.Attributes.property "___capturePointer" details.pointerId
-                                    , Svg.Events.on "pointermove" (decodePointerMove PointerMoved index)
-                                    ]
-
-                                else
-                                    []
-
-                            Nothing ->
-                                []
-                       )
-                )
-                (Circle3d.withRadius
-                    (Length.meters 5)
-                    dir
-                    -- (Axis3d.direction rotAxis)
-                    origin3d
-                    |> Circle3d.projectInto
-                        (camera
-                            |> Camera3d.viewpoint
-                            |> Viewpoint3d.viewPlane
-                        )
-                    |> Ellipse2d.toEllipticalArc
-                )
+                |> Svg.g []
 
         viewWhenSelected : (Point3d Meters Coordinates.World -> ControlFrame -> Svg Msg) -> Control -> Svg Msg
         viewWhenSelected fn control =
@@ -1127,6 +1129,35 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
                     , dir = zDir
                     , origin3d = originPoint
                     }
+
+                -- , Geometry.Svg.circle2d
+                --     [ Svg.Attributes.stroke "rgb(200, 0, 200)"
+                --     , Svg.Attributes.strokeWidth "2"
+                --     , Svg.Attributes.fill "rgba(0, 0, 0, 0)"
+                --     , Html.Attributes.attribute "tabindex" "0"
+                --     , Svg.Events.on "pointerdown" (decodePointerDown (\_ _ shiftKey -> ControlPointSelected index shiftKey))
+                --     ]
+                --     (originPoint
+                --         |> Point3d.Projection.toScreenSpace camera screenRectangle
+                --         |> Circle2d.withRadius (Pixels.float 6)
+                --     )
+                -- , originPoint
+                --     |> Circle3d.withRadius
+                --         (Length.meters 1)
+                --         -- (Axis3d.direction rotAxis)
+                --         Direction3d.positiveX
+                --     |> Circle3d.toArc
+                --     |> Arc3d.segments 16
+                --     |> Polyline3d.segments
+                --     |> List.map
+                --         (LineSegment3d.Projection.toScreenSpace camera screenRectangle
+                --             >> Geometry.Svg.lineSegment2d
+                --                 [ Svg.Attributes.stroke "rgb(200, 0, 200)"
+                --                 , Svg.Attributes.fill "rgb(200, 0, 200)"
+                --                 , Svg.Attributes.id "carl-123"
+                --                 ]
+                --         )
+                --     |> Svg.g []
                 ]
 
         controlPointSvgs : Svg Msg
