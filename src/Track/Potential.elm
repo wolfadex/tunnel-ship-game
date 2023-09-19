@@ -1,16 +1,20 @@
 module Track.Potential exposing
     ( ActiveControlPoint
     , Control
+    , EditType(..)
     , Effect
     , Internal
     , LengthError(..)
     , Msg
     , Potential(..)
+    , Scope(..)
     , Segment
     , editControlPoint
+    , editMode
     , init
     , length
     , newDebugFlags
+    , setEditMode
     , toSegments
     , update
     , view
@@ -53,6 +57,7 @@ import Svg.Events
 import Update exposing (Update)
 import Util.Result
 import Vector3d
+import Viewpoint3d
 import Visible exposing (Visible)
 
 
@@ -65,6 +70,7 @@ type alias Internal =
     , controlPoints : List Control
     , knots : List Float
     , geometry : Scene3d.Entity Coordinates.World
+    , editMode : ( EditType, Scope )
     }
 
 
@@ -73,25 +79,26 @@ type alias ControlFrame =
 
 
 type Control
-    = MovingGlobal
-        { pointerId : Json.Decode.Value
-        , index : Int
-        , point : Point2d Pixels Coordinates.Screen
-        , direction : Direction3d Coordinates.World
-        , plane : Plane3d Meters Coordinates.World
-        , editingFrame : ControlFrame
-        , originalFrame : ControlFrame
-        }
-    | RotatingLocal
-        { pointerId : Json.Decode.Value
-        , index : Int
-        , point : Point2d Pixels Coordinates.Screen
-        , direction : Direction3d Coordinates.World
-        , plane : Plane3d Meters Coordinates.World
-        , rotationAxis : Axis3d Meters Coordinates.World
-        , editingFrame : ControlFrame
-        , originalFrame : ControlFrame
-        }
+    = Selected ControlFrame
+      -- | MovingGlobal
+      --     { pointerId : Json.Decode.Value
+      --     , index : Int
+      --     , point : Point2d Pixels Coordinates.Screen
+      --     , direction : Direction3d Coordinates.World
+      --     , plane : Plane3d Meters Coordinates.World
+      --     , editingFrame : ControlFrame
+      --     , originalFrame : ControlFrame
+      --     }
+      -- | RotatingLocal
+      --     { pointerId : Json.Decode.Value
+      --     , index : Int
+      --     , point : Point2d Pixels Coordinates.Screen
+      --     , direction : Direction3d Coordinates.World
+      --     , plane : Plane3d Meters Coordinates.World
+      --     , rotationAxis : Axis3d Meters Coordinates.World
+      --     , editingFrame : ControlFrame
+      --     , originalFrame : ControlFrame
+      --     }
     | Fixed ControlFrame
 
 
@@ -103,6 +110,16 @@ type alias ActiveControlPoint =
     , plane : Plane3d Meters Coordinates.World
     , rotationAxis : Axis3d Meters Coordinates.World
     }
+
+
+type EditType
+    = Move
+    | Rotate
+
+
+type Scope
+    = Global
+    | Local
 
 
 init : Shape Coordinates.Flat -> Maybe DebugFlags -> Potential
@@ -175,17 +192,19 @@ init shape debugFlags =
         , controlPoints = controlPoints
         , knots = knots
         , geometry = createTrackGeometry knots debugFlags shape controlPoints
+        , editMode = ( Move, Global )
         }
 
 
 controlToFrame : Control -> ControlFrame
 controlToFrame control =
     case control of
-        MovingGlobal { originalFrame } ->
-            originalFrame
-
-        RotatingLocal { originalFrame } ->
-            originalFrame
+        -- MovingGlobal { originalFrame } ->
+        --     originalFrame
+        -- RotatingLocal { originalFrame } ->
+        --     originalFrame
+        Selected frame ->
+            frame
 
         Fixed frame ->
             frame
@@ -511,77 +530,72 @@ editControlPoint cfg (Potential potential) =
                             Fixed _ ->
                                 control
 
-                            MovingGlobal editingControl ->
-                                let
-                                    maybeIntersectionPoint =
-                                        editingControl.point
-                                            |> Camera3d.ray cfg.camera cfg.screenRectangle
-                                            |> Axis3d.intersectionWithPlane editingControl.plane
-                                in
-                                case maybeIntersectionPoint of
-                                    Nothing ->
-                                        control
-
-                                    Just intersectionPoint ->
-                                        let
-                                            axis =
-                                                Axis3d.through (Frame3d.originPoint editingControl.editingFrame) editingControl.direction
-
-                                            oldCenter =
-                                                Frame3d.originPoint editingControl.editingFrame
-
-                                            newEditingFrame =
-                                                Point3d.projectOntoAxis axis intersectionPoint
-                                                    |> Direction3d.from oldCenter
-                                                    |> Maybe.map
-                                                        (\dir ->
-                                                            control
-                                                                |> controlToFrame
-                                                                |> Frame3d.translateIn
-                                                                    dir
-                                                                    (Point3d.distanceFrom oldCenter intersectionPoint)
-                                                        )
-                                        in
-                                        case newEditingFrame of
-                                            Nothing ->
-                                                control
-
-                                            Just newFrame ->
-                                                MovingGlobal { editingControl | editingFrame = newFrame }
-
-                            RotatingLocal editingControl ->
-                                let
-                                    maybeIntersectionPoint =
-                                        cfg.point
-                                            |> Camera3d.ray cfg.camera cfg.screenRectangle
-                                            |> Axis3d.intersectionWithPlane editingControl.plane
-
-                                    -- oldCP =
-                                    --     previousControlPoint
-                                    --         |> Camera3d.ray camera screenRectangle
-                                    --         |> Axis3d.intersectionWithPlane movingControlPoint.plane
-                                in
-                                case maybeIntersectionPoint of
-                                    Nothing ->
-                                        control
-
-                                    Just intersectionPoint ->
-                                        let
-                                            angle =
-                                                Point3d.distanceFrom (Frame3d.originPoint editingControl.originalFrame) intersectionPoint
-                                                    |> Length.inMeters
-                                                    -- |> (*) 2
-                                                    -- |> Debug.log "angle"
-                                                    |> Angle.degrees
-                                        in
-                                        RotatingLocal
-                                            { editingControl
-                                                | editingFrame =
-                                                    Frame3d.rotateAround
-                                                        editingControl.rotationAxis
-                                                        angle
-                                                        editingControl.originalFrame
-                                            }
+                            Selected _ ->
+                                control
+                        -- MovingGlobal editingControl ->
+                        --     let
+                        --         maybeIntersectionPoint =
+                        --             editingControl.point
+                        --                 |> Camera3d.ray cfg.camera cfg.screenRectangle
+                        --                 |> Axis3d.intersectionWithPlane editingControl.plane
+                        --     in
+                        --     case maybeIntersectionPoint of
+                        --         Nothing ->
+                        --             control
+                        --         Just intersectionPoint ->
+                        --             let
+                        --                 axis =
+                        --                     Axis3d.through (Frame3d.originPoint editingControl.editingFrame) editingControl.direction
+                        --                 oldCenter =
+                        --                     Frame3d.originPoint editingControl.editingFrame
+                        --                 newEditingFrame =
+                        --                     Point3d.projectOntoAxis axis intersectionPoint
+                        --                         |> Direction3d.from oldCenter
+                        --                         |> Maybe.map
+                        --                             (\dir ->
+                        --                                 control
+                        --                                     |> controlToFrame
+                        --                                     |> Frame3d.translateIn
+                        --                                         dir
+                        --                                         (Point3d.distanceFrom oldCenter intersectionPoint)
+                        --                             )
+                        --             in
+                        --             case newEditingFrame of
+                        --                 Nothing ->
+                        --                     control
+                        --                 Just newFrame ->
+                        --                     MovingGlobal { editingControl | editingFrame = newFrame }
+                        -- RotatingLocal editingControl ->
+                        --     let
+                        --         maybeIntersectionPoint =
+                        --             cfg.point
+                        --                 |> Camera3d.ray cfg.camera cfg.screenRectangle
+                        --                 |> Axis3d.intersectionWithPlane editingControl.plane
+                        --         -- oldCP =
+                        --         --     previousControlPoint
+                        --         --         |> Camera3d.ray camera screenRectangle
+                        --         --         |> Axis3d.intersectionWithPlane movingControlPoint.plane
+                        --     in
+                        --     case maybeIntersectionPoint of
+                        --         Nothing ->
+                        --             control
+                        --         Just intersectionPoint ->
+                        --             let
+                        --                 angle =
+                        --                     Point3d.distanceFrom (Frame3d.originPoint editingControl.originalFrame) intersectionPoint
+                        --                         |> Length.inMeters
+                        --                         -- |> (*) 2
+                        --                         -- |> Debug.log "angle"
+                        --                         |> Angle.degrees
+                        --             in
+                        --             RotatingLocal
+                        --                 { editingControl
+                        --                     | editingFrame =
+                        --                         Frame3d.rotateAround
+                        --                             editingControl.rotationAxis
+                        --                             angle
+                        --                             editingControl.originalFrame
+                        --                 }
 
                     else
                         control
@@ -627,8 +641,10 @@ lengthInternal { controlPoints, knots } =
 
 
 type Msg
-    = ControlPointSelected ActiveControlPoint
+    = ControlPointSelected Int
     | ControlPointDeselected Int
+    | ContrlPointArmSelected ActiveControlPoint
+    | ControlPointArmDeselected Int
     | PointerMoved Int (Point2d Pixels Coordinates.Screen)
 
 
@@ -636,25 +652,22 @@ type alias Effect =
     Never
 
 
-update : Msg -> Potential -> Update Potential Msg Effect
-update msg (Potential potential) =
+update : { camera : Camera3d Meters Coordinates.World, debugFlags : DebugFlags } -> Msg -> Potential -> Update Potential Msg Effect
+update cfg msg (Potential potential) =
     case msg of
-        ControlPointSelected active ->
+        ControlPointSelected index ->
             { potential
                 | controlPoints =
                     potential.controlPoints
                         |> List.indexedMap
                             (\i control ->
-                                if i == active.index then
-                                    MovingGlobal
-                                        { direction = active.direction
-                                        , editingFrame = controlToFrame control
-                                        , index = active.index
-                                        , originalFrame = controlToFrame control
-                                        , plane = active.plane
-                                        , point = active.point
-                                        , pointerId = active.pointerId
-                                        }
+                                if i == index then
+                                    case control of
+                                        Selected frame ->
+                                            control
+
+                                        Fixed frame ->
+                                            Selected frame
 
                                 else
                                     control
@@ -674,11 +687,8 @@ update msg (Potential potential) =
                                         Fixed _ ->
                                             control
 
-                                        MovingGlobal editingControl ->
-                                            Fixed editingControl.editingFrame
-
-                                        RotatingLocal editingControl ->
-                                            Fixed editingControl.editingFrame
+                                        Selected frame ->
+                                            Fixed frame
 
                                 else
                                     control
@@ -687,9 +697,54 @@ update msg (Potential potential) =
                 |> Potential
                 |> Update.save
 
-        PointerMoved index point ->
+        ContrlPointArmSelected armDetails ->
             potential
                 |> Potential
+                |> Update.save
+
+        ControlPointArmDeselected index ->
+            potential
+                |> Potential
+                |> Update.save
+
+        PointerMoved index point ->
+            let
+                viewSize =
+                    { width = 800
+                    , height = 600
+                    }
+
+                screenRectangle : Rectangle2d Pixels Coordinates.Screen
+                screenRectangle =
+                    Point2d.pixels viewSize.width 0
+                        |> Rectangle2d.from (Point2d.pixels 0 viewSize.height)
+
+                -- newMovingControlPoint =
+                --     { movingControlPoint | point = point }
+            in
+            -- case potential.editMode of
+            --     ( Move, Global ) ->
+            --         editControlPoint
+            --             { camera = cfg.camera
+            --             , screenRectangle = screenRectangle
+            --             , point = point
+            --             , index = index
+            --             , debugFlags = cfg.debugFlags
+            --             }
+            --             (Potential potential)
+            --     ( Move, Local ) ->
+            --         Debug.todo ""
+            --     ( Rotate, Global ) ->
+            --         Debug.todo ""
+            --     ( Rotate, Local ) ->
+            editControlPoint
+                { camera = cfg.camera
+                , screenRectangle = screenRectangle
+                , point = point
+                , index = index
+                , debugFlags = cfg.debugFlags
+                }
+                (Potential potential)
                 |> Update.save
 
 
@@ -781,7 +836,7 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential track) =
                         }
                     )
 
-        viewControlPointDirSegment :
+        viewControlPointMoveArm :
             String
             -> Int
             -> Plane3d Meters Coordinates.World
@@ -789,7 +844,7 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential track) =
             -> Axis3d Meters Coordinates.World
             -> LineSegment2d Pixels Coordinates.Screen
             -> Svg Msg
-        viewControlPointDirSegment color index plane dir rotAxis segment =
+        viewControlPointMoveArm color index plane dir rotAxis segment =
             Geometry.Svg.lineSegment2d
                 ([ Svg.Attributes.stroke color
                  , Svg.Attributes.strokeWidth "4"
@@ -797,8 +852,20 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential track) =
 
                  -- TODO
                  -- ([ Svg.Attributes.pointerEvents "all"
-                 , Svg.Events.on "pointerdown" (decodePointerDown ControlPointSelected index plane dir rotAxis)
-                 , Svg.Events.on "pointerup" (decodePointerUp ControlPointDeselected index)
+                 , Svg.Events.on "pointerdown"
+                    (decodePointerDown
+                        (\pointerId point ->
+                            ContrlPointArmSelected
+                                { pointerId = pointerId
+                                , index = index
+                                , point = point
+                                , direction = dir
+                                , plane = plane
+                                , rotationAxis = rotAxis
+                                }
+                        )
+                    )
+                 , Svg.Events.on "pointerup" (decodePointerUp (ControlPointDeselected index))
 
                  -- , Svg.Events.on "keydown" (decodeKeyDown index)
                  -- ]
@@ -828,21 +895,21 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential track) =
                     Svg.g
                         [ Svg.Attributes.class "track-editor-control-point"
                         ]
-                        [ viewControlPointDirSegment
+                        [ viewControlPointMoveArm
                             "red"
                             index
                             (Plane3d.through controlPoint.point Direction3d.positiveZ)
                             Direction3d.positiveX
                             (Direction3d.positiveX |> Axis3d.through controlPoint.point)
                             controlPoint.xSegment
-                        , viewControlPointDirSegment
+                        , viewControlPointMoveArm
                             "green"
                             index
                             (Plane3d.through controlPoint.point Direction3d.positiveZ)
                             Direction3d.positiveY
                             (Direction3d.positiveY |> Axis3d.through controlPoint.point)
                             controlPoint.ySegment
-                        , viewControlPointDirSegment
+                        , viewControlPointMoveArm
                             "blue"
                             index
                             (Plane3d.through controlPoint.point Direction3d.positiveX)
@@ -854,6 +921,7 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential track) =
                             , Svg.Attributes.strokeWidth "2"
                             , Svg.Attributes.fill "rgba(0, 0, 0, 0)"
                             , Html.Attributes.attribute "tabindex" "0"
+                            , Svg.Events.on "pointerdown" (decodePointerDown (\_ _ -> ControlPointSelected index))
                             ]
                             (Circle2d.withRadius (Pixels.float 6) controlPoint.center)
                         ]
@@ -908,33 +976,21 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential track) =
         ]
 
 
-decodePointerDown :
-    (ActiveControlPoint -> msg)
-    -> Int
-    -> Plane3d Meters Coordinates.World
-    -> Direction3d Coordinates.World
-    -> Axis3d Meters Coordinates.World
-    -> Json.Decode.Decoder msg
-decodePointerDown handler index plane dir rotAxis =
-    Json.Decode.map3
-        (\pointerId x y ->
-            handler
-                { index = index
-                , direction = dir
-                , pointerId = pointerId
-                , point = Point2d.pixels x y
-                , plane = plane
-                , rotationAxis = rotAxis
-                }
-        )
+decodePointerDown : (PointerId -> Point2d Pixels Coordinates.Screen -> msg) -> Json.Decode.Decoder msg
+decodePointerDown handler =
+    Json.Decode.map3 (\pointerId x y -> handler pointerId (Point2d.pixels x y))
         (Json.Decode.field "pointerId" Json.Decode.value)
         (Json.Decode.field "clientX" Json.Decode.float)
         (Json.Decode.field "clientY" Json.Decode.float)
 
 
-decodePointerUp : (Int -> msg) -> Int -> Json.Decode.Decoder msg
-decodePointerUp handler index =
-    Json.Decode.succeed (handler index)
+type alias PointerId =
+    Json.Decode.Value
+
+
+decodePointerUp : msg -> Json.Decode.Decoder msg
+decodePointerUp handler =
+    Json.Decode.succeed handler
 
 
 decodePointerMove : (Int -> Point2d Pixels Coordinates.Screen -> msg) -> Int -> Json.Decode.Decoder msg
@@ -947,3 +1003,13 @@ decodePointerMove handler index =
 view : Potential -> Scene3d.Entity Coordinates.World
 view (Potential track) =
     track.geometry
+
+
+editMode : Potential -> ( EditType, Scope )
+editMode (Potential track) =
+    track.editMode
+
+
+setEditMode : ( EditType, Scope ) -> Potential -> Potential
+setEditMode editMode_ (Potential track) =
+    Potential { track | editMode = editMode_ }

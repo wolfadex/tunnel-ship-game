@@ -1,6 +1,5 @@
 port module TrackEditor exposing
     ( Direction(..)
-    , EditType
     , EditorCamera
     , Effect(..)
     , Event(..)
@@ -8,7 +7,6 @@ port module TrackEditor exposing
     , Model
     , Modifiers
     , Msg(..)
-    , Scope
     , init
     , subscriptions
     , update
@@ -63,18 +61,7 @@ type alias Model =
     , camera : EditorCamera
     , debugFlags : DebugFlags
     , movingControlPoint : Maybe Track.Potential.ActiveControlPoint
-    , editMode : ( EditType, Scope )
     }
-
-
-type EditType
-    = Move
-    | Rotate
-
-
-type Scope
-    = Global
-    | Local
 
 
 type alias Modifiers =
@@ -151,7 +138,6 @@ init timeNow =
             )
     , debugFlags = debugFlags
     , movingControlPoint = Nothing
-    , editMode = ( Move, Global )
     , lastTickTime = Time.millisToPosix (round timeNow)
     }
         |> Update.save
@@ -214,8 +200,8 @@ type Msg
     | PointerMove Int (Point2d Pixels Coordinates.Screen)
     | PointerUp Int
     | PreviewShipDistanceChanged String
-    | EditTypeChangeClicked EditType
-    | EditScopeChangeClicked Scope
+    | EditTypeChangeClicked Track.Potential.EditType
+    | EditScopeChangeClicked Track.Potential.Scope
     | TrackPotentialMsg Track.Potential.Msg
 
 
@@ -302,21 +288,47 @@ update msg model =
         EditTypeChangeClicked editType ->
             let
                 ( _, scope ) =
-                    model.editMode
+                    Track.Potential.editMode model.potentialTrack
             in
-            { model | editMode = ( editType, scope ) }
+            { model
+                | potentialTrack =
+                    Track.Potential.setEditMode
+                        ( editType, scope )
+                        model.potentialTrack
+            }
                 |> Update.save
 
         EditScopeChangeClicked scope ->
             let
                 ( editType, _ ) =
-                    model.editMode
+                    Track.Potential.editMode model.potentialTrack
             in
-            { model | editMode = ( editType, scope ) }
+            { model
+                | potentialTrack =
+                    Track.Potential.setEditMode
+                        ( editType, scope )
+                        model.potentialTrack
+            }
                 |> Update.save
 
         TrackPotentialMsg msg_ ->
-            Track.Potential.update msg_ model.potentialTrack
+            Track.Potential.update
+                { camera =
+                    Camera3d.perspective
+                        { viewpoint =
+                            Viewpoint3d.lookAt
+                                { eyePoint = model.camera.center
+                                , focalPoint =
+                                    model.camera.center
+                                        |> Point3d.translateIn model.camera.forward (Length.meters 1)
+                                , upDirection = Direction3d.positiveZ
+                                }
+                        , verticalFieldOfView = Angle.degrees 30
+                        }
+                , debugFlags = model.debugFlags
+                }
+                msg_
+                model.potentialTrack
                 |> Update.mapModel (\potentialTrack -> { model | potentialTrack = potentialTrack })
                 |> Update.mapMsg TrackPotentialMsg
                 |> Update.applyEffects (\_ update_ -> update_)
@@ -328,94 +340,84 @@ update msg model =
                 |> Update.save
 
         PointerMove index point ->
-            case model.movingControlPoint of
-                Nothing ->
-                    model
-                        |> Update.save
-
-                Just movingControlPoint ->
-                    if index == movingControlPoint.index then
-                        let
-                            viewSize =
-                                { width = 800
-                                , height = 600
-                                }
-
-                            camera : Camera3d Meters Coordinates.World
-                            camera =
-                                Camera3d.perspective
-                                    { viewpoint =
-                                        Viewpoint3d.lookAt
-                                            { eyePoint = model.camera.center
-                                            , focalPoint =
-                                                model.camera.center
-                                                    |> Point3d.translateIn model.camera.forward (Length.meters 1)
-                                            , upDirection = Direction3d.positiveZ
-                                            }
-                                    , verticalFieldOfView = Angle.degrees 30
-                                    }
-
-                            screenRectangle : Rectangle2d Pixels Coordinates.Screen
-                            screenRectangle =
-                                Point2d.pixels viewSize.width 0
-                                    |> Rectangle2d.from (Point2d.pixels 0 viewSize.height)
-
-                            newMovingControlPoint =
-                                { movingControlPoint | point = point }
-
-                            newPotentialTrack : Track.Potential.Potential
-                            newPotentialTrack =
-                                case model.editMode of
-                                    ( Move, Global ) ->
-                                        Track.Potential.editControlPoint
-                                            { camera = camera
-                                            , screenRectangle = screenRectangle
-                                            , point = point
-                                            , index = index
-                                            , debugFlags = model.debugFlags
-                                            }
-                                            model.potentialTrack
-
-                                    ( Move, Local ) ->
-                                        Debug.todo ""
-
-                                    ( Rotate, Global ) ->
-                                        Debug.todo ""
-
-                                    ( Rotate, Local ) ->
-                                        Track.Potential.editControlPoint
-                                            { camera = camera
-                                            , screenRectangle = screenRectangle
-                                            , point = point
-                                            , index = index
-                                            , debugFlags = model.debugFlags
-                                            }
-                                            model.potentialTrack
-                        in
-                        { model
-                            | movingControlPoint = Just newMovingControlPoint
-                            , potentialTrack = newPotentialTrack
-                            , trackPreview =
-                                newPotentialTrack
-                                    |> Track.Potential.toSegments
-                                    |> Result.toMaybe
-                                    |> Maybe.andThen
-                                        (\segments ->
-                                            case segments of
-                                                [] ->
-                                                    Nothing
-
-                                                first :: rest ->
-                                                    ( first, rest )
-                                                        |> Track.init (Shape.newRegular 5)
-                                                        |> Just
-                                        )
-                        }
-                            |> Update.save
-
-                    else
-                        model
-                            |> Update.save
+            -- case model.movingControlPoint of
+            --     Nothing ->
+            --         model
+            --             |> Update.save
+            --     Just movingControlPoint ->
+            --         if index == movingControlPoint.index then
+            --             let
+            --                 viewSize =
+            --                     { width = 800
+            --                     , height = 600
+            --                     }
+            --                 camera : Camera3d Meters Coordinates.World
+            --                 camera =
+            --                     Camera3d.perspective
+            --                         { viewpoint =
+            --                             Viewpoint3d.lookAt
+            --                                 { eyePoint = model.camera.center
+            --                                 , focalPoint =
+            --                                     model.camera.center
+            --                                         |> Point3d.translateIn model.camera.forward (Length.meters 1)
+            --                                 , upDirection = Direction3d.positiveZ
+            --                                 }
+            --                         , verticalFieldOfView = Angle.degrees 30
+            --                         }
+            --                 screenRectangle : Rectangle2d Pixels Coordinates.Screen
+            --                 screenRectangle =
+            --                     Point2d.pixels viewSize.width 0
+            --                         |> Rectangle2d.from (Point2d.pixels 0 viewSize.height)
+            --                 newMovingControlPoint =
+            --                     { movingControlPoint | point = point }
+            --                 newPotentialTrack : Track.Potential.Potential
+            --                 newPotentialTrack =
+            --                     case model.editMode of
+            --                         ( Move, Global ) ->
+            --                             Track.Potential.editControlPoint
+            --                                 { camera = camera
+            --                                 , screenRectangle = screenRectangle
+            --                                 , point = point
+            --                                 , index = index
+            --                                 , debugFlags = model.debugFlags
+            --                                 }
+            --                                 model.potentialTrack
+            --                         ( Move, Local ) ->
+            --                             Debug.todo ""
+            --                         ( Rotate, Global ) ->
+            --                             Debug.todo ""
+            --                         ( Rotate, Local ) ->
+            --                             Track.Potential.editControlPoint
+            --                                 { camera = camera
+            --                                 , screenRectangle = screenRectangle
+            --                                 , point = point
+            --                                 , index = index
+            --                                 , debugFlags = model.debugFlags
+            --                                 }
+            --                                 model.potentialTrack
+            --             in
+            --             { model
+            --                 | movingControlPoint = Just newMovingControlPoint
+            --                 , potentialTrack = newPotentialTrack
+            --                 , trackPreview =
+            --                     newPotentialTrack
+            --                         |> Track.Potential.toSegments
+            --                         |> Result.toMaybe
+            --                         |> Maybe.andThen
+            --                             (\segments ->
+            --                                 case segments of
+            --                                     [] ->
+            --                                         Nothing
+            --                                     first :: rest ->
+            --                                         ( first, rest )
+            --                                             |> Track.init (Shape.newRegular 5)
+            --                                             |> Just
+            --                             )
+            --             }
+            --                 |> Update.save
+            --         else
+            model
+                |> Update.save
 
         PointerUp _ ->
             { model | movingControlPoint = Nothing }
@@ -714,44 +716,44 @@ view model =
                     ]
                 , Html.div []
                     [ Html.button
-                        [ Html.Events.onClick (EditTypeChangeClicked Move)
+                        [ Html.Events.onClick (EditTypeChangeClicked Track.Potential.Move)
                         , Html.Attributes.attribute "aria-pressed" <|
-                            case model.editMode of
-                                ( Move, _ ) ->
+                            case Track.Potential.editMode model.potentialTrack of
+                                ( Track.Potential.Move, _ ) ->
                                     "true"
 
-                                ( Rotate, _ ) ->
+                                ( Track.Potential.Rotate, _ ) ->
                                     "false"
                         ]
                         [ Html.text "Move" ]
                     , Html.button
-                        [ Html.Events.onClick (EditTypeChangeClicked Rotate)
+                        [ Html.Events.onClick (EditTypeChangeClicked Track.Potential.Rotate)
                         , Html.Attributes.attribute "aria-pressed" <|
-                            case model.editMode of
-                                ( Rotate, _ ) ->
+                            case Track.Potential.editMode model.potentialTrack of
+                                ( Track.Potential.Rotate, _ ) ->
                                     "true"
 
-                                ( Move, _ ) ->
+                                ( Track.Potential.Move, _ ) ->
                                     "false"
                         ]
                         [ Html.text "Rotate" ]
                     , Html.button
                         [ Html.Events.onClick
                             (EditScopeChangeClicked <|
-                                case model.editMode of
-                                    ( _, Global ) ->
-                                        Local
+                                case Track.Potential.editMode model.potentialTrack of
+                                    ( _, Track.Potential.Global ) ->
+                                        Track.Potential.Local
 
-                                    ( _, Local ) ->
-                                        Global
+                                    ( _, Track.Potential.Local ) ->
+                                        Track.Potential.Global
                             )
                         ]
                         [ Html.text <|
-                            case model.editMode of
-                                ( _, Global ) ->
+                            case Track.Potential.editMode model.potentialTrack of
+                                ( _, Track.Potential.Global ) ->
                                     "Global"
 
-                                ( _, Local ) ->
+                                ( _, Track.Potential.Local ) ->
                                     "Local"
                         ]
                     ]
