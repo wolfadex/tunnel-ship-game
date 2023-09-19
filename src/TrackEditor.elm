@@ -210,7 +210,7 @@ type Msg
     | DebugTrackPathToggled Visible
     | DebugTrackPathDownDirectionToggled Visible
     | DebugTunnelToggled Visible
-    | PointerDown Track.ActiveControlPoint
+    | PointerDown Track.Potential.ActiveControlPoint
     | PointerMove Int (Point2d Pixels Coordinates.Screen)
     | PointerUp Int
     | PreviewShipDistanceChanged String

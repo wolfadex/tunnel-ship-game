@@ -1,6 +1,5 @@
 module Track exposing
-    ( ActiveControlPoint
-    , LengthError(..)
+    ( LengthError(..)
     , PotentialError(..)
     , Segment
     , Track
@@ -47,6 +46,10 @@ type alias InternalTrack =
         )
     , geometry : Scene3d.Entity Coordinates.World
     }
+
+
+type alias ControlFrame =
+    Frame3d Meters Coordinates.World Coordinates.DefinesLocal
 
 
 type PotentialError
@@ -170,7 +173,7 @@ type alias Segment units coordinates =
     )
 
 
-sampleAlong : ( Segment Meters Coordinates.World, List (Segment Meters Coordinates.World) ) -> Length -> Frame3d Meters Coordinates.World Coordinates.DefinesLocal
+sampleAlong : ( Segment Meters Coordinates.World, List (Segment Meters Coordinates.World) ) -> Length -> ControlFrame
 sampleAlong ( ( left, right ), rest ) dist =
     let
         arcLengthParamLeft =
@@ -253,20 +256,6 @@ lengthInteral ( first, rest ) =
 length : Track -> Length
 length (Track track) =
     lengthInteral track.segments
-
-
-
--- Editing
-
-
-type alias ActiveControlPoint =
-    { pointerId : Json.Decode.Value
-    , index : Int
-    , point : Point2d Pixels Coordinates.Screen
-    , direction : Direction3d Coordinates.World
-    , plane : Plane3d Meters Coordinates.World
-    , rotationAxis : Axis3d Meters Coordinates.World
-    }
 
 
 sample : Track -> Length -> Frame3d Meters Coordinates.World Coordinates.DefinesLocal
