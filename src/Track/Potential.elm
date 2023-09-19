@@ -891,7 +891,6 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
                                 []
                        )
                 )
-                -- segment
                 (LineSegment2d.from
                     (origin3d
                         |> Point3d.Projection.toScreenSpace camera screenRectangle
