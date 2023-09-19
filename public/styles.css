@@ -31,9 +31,6 @@ button[aria-pressed="true"] {
     cursor: pointer;
 }
 
-.track-editor-control-point circle {
-    pointer-events: none;
-}
 
 .track-editor-control-point:active circle,
 .track-editor-control-point:focus circle,
@@ -42,10 +39,10 @@ button[aria-pressed="true"] {
     opacity: 0.75;
 }
 
-.track-editor-control-point-dir:active,
-.track-editor-control-point-dir:focus,
-.track-editor-control-point-dir:focus-within,
-.track-editor-control-point-dir:hover {
+.track-editor-control-point-arm:active,
+.track-editor-control-point-arm:focus,
+.track-editor-control-point-arm:focus-within,
+.track-editor-control-point-arm:hover {
     opacity: 1;
 }
 

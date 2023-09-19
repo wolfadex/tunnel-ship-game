@@ -755,7 +755,7 @@ viewControlPoints :
     }
     -> Potential
     -> Html Msg
-viewControlPoints { viewSize, camera, movingControlPoint } (Potential track) =
+viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
     let
         -- Take the 3D model for the logo and rotate it by the current angle
         -- rotatedLogo =
@@ -779,7 +779,7 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential track) =
                 , zSegment : LineSegment2d Pixels Coordinates.Screen
                 }
         controlPoints =
-            track.controlPoints
+            model.controlPoints
                 |> List.map
                     (\control ->
                         { center =
@@ -837,18 +837,19 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential track) =
                     )
 
         viewControlPointMoveArm :
-            String
-            -> Int
-            -> Plane3d Meters Coordinates.World
-            -> Direction3d Coordinates.World
-            -> Axis3d Meters Coordinates.World
-            -> LineSegment2d Pixels Coordinates.Screen
+            { color : String
+            , index : Int
+            , plane : Plane3d Meters Coordinates.World
+            , dir : Direction3d Coordinates.World
+            , rotAxis : Axis3d Meters Coordinates.World
+            , segment : LineSegment2d Pixels Coordinates.Screen
+            }
             -> Svg Msg
-        viewControlPointMoveArm color index plane dir rotAxis segment =
+        viewControlPointMoveArm { color, index, plane, dir, rotAxis, segment } =
             Geometry.Svg.lineSegment2d
                 ([ Svg.Attributes.stroke color
                  , Svg.Attributes.strokeWidth "4"
-                 , Svg.Attributes.class "track-editor-control-point-dir"
+                 , Svg.Attributes.class "track-editor-control-point-arm"
 
                  -- TODO
                  -- ([ Svg.Attributes.pointerEvents "all"
@@ -888,45 +889,115 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential track) =
                 )
                 segment
 
+        viewWhenSelected : (Point3d Meters Coordinates.World -> Svg Msg) -> Control -> Svg Msg
+        viewWhenSelected fn control =
+            case control of
+                Fixed _ ->
+                    Svg.text ""
+
+                Selected frame ->
+                    fn (Frame3d.originPoint frame)
+
         controlPointSvgs : Svg Msg
         controlPointSvgs =
             List.indexedMap
-                (\index controlPoint ->
+                (\index control ->
                     Svg.g
                         [ Svg.Attributes.class "track-editor-control-point"
                         ]
-                        [ viewControlPointMoveArm
-                            "red"
-                            index
-                            (Plane3d.through controlPoint.point Direction3d.positiveZ)
-                            Direction3d.positiveX
-                            (Direction3d.positiveX |> Axis3d.through controlPoint.point)
-                            controlPoint.xSegment
-                        , viewControlPointMoveArm
-                            "green"
-                            index
-                            (Plane3d.through controlPoint.point Direction3d.positiveZ)
-                            Direction3d.positiveY
-                            (Direction3d.positiveY |> Axis3d.through controlPoint.point)
-                            controlPoint.ySegment
-                        , viewControlPointMoveArm
-                            "blue"
-                            index
-                            (Plane3d.through controlPoint.point Direction3d.positiveX)
-                            Direction3d.positiveZ
-                            (Direction3d.positiveZ |> Axis3d.through controlPoint.point)
-                            controlPoint.zSegment
-                        , Geometry.Svg.circle2d
-                            [ Svg.Attributes.stroke "rgb(200, 255, 200)"
-                            , Svg.Attributes.strokeWidth "2"
-                            , Svg.Attributes.fill "rgba(0, 0, 0, 0)"
-                            , Html.Attributes.attribute "tabindex" "0"
-                            , Svg.Events.on "pointerdown" (decodePointerDown (\_ _ -> ControlPointSelected index))
-                            ]
-                            (Circle2d.withRadius (Pixels.float 6) controlPoint.center)
+                        [ viewWhenSelected
+                            (\originPoint ->
+                                viewControlPointMoveArm
+                                    { color = "red"
+                                    , index = index
+                                    , plane = Plane3d.through originPoint Direction3d.positiveZ
+                                    , dir = Direction3d.positiveX
+                                    , rotAxis =
+                                        Direction3d.positiveX
+                                            |> Axis3d.through originPoint
+                                    , segment =
+                                        LineSegment2d.from
+                                            (originPoint
+                                                |> Point3d.Projection.toScreenSpace camera screenRectangle
+                                            )
+                                            (Point3d.Projection.toScreenSpace camera
+                                                screenRectangle
+                                                (originPoint
+                                                    |> Point3d.translateIn Direction3d.positiveX (Length.meters 1)
+                                                )
+                                            )
+                                    }
+                            )
+                            control
+                        , viewWhenSelected
+                            (\originPoint ->
+                                viewControlPointMoveArm
+                                    { color = "green"
+                                    , index = index
+                                    , plane = Plane3d.through originPoint Direction3d.positiveZ
+                                    , dir = Direction3d.positiveY
+                                    , rotAxis =
+                                        Direction3d.positiveY
+                                            |> Axis3d.through originPoint
+                                    , segment =
+                                        LineSegment2d.from
+                                            (originPoint
+                                                |> Point3d.Projection.toScreenSpace camera screenRectangle
+                                            )
+                                            (Point3d.Projection.toScreenSpace camera
+                                                screenRectangle
+                                                (originPoint
+                                                    |> Point3d.translateIn Direction3d.positiveY (Length.meters 1)
+                                                )
+                                            )
+                                    }
+                            )
+                            control
+                        , viewWhenSelected
+                            (\originPoint ->
+                                viewControlPointMoveArm
+                                    { color = "blue"
+                                    , index = index
+                                    , plane = Plane3d.through originPoint Direction3d.positiveX
+                                    , dir = Direction3d.positiveZ
+                                    , rotAxis =
+                                        Direction3d.positiveZ
+                                            |> Axis3d.through originPoint
+                                    , segment =
+                                        LineSegment2d.from
+                                            (originPoint
+                                                |> Point3d.Projection.toScreenSpace camera screenRectangle
+                                            )
+                                            (Point3d.Projection.toScreenSpace camera
+                                                screenRectangle
+                                                (originPoint
+                                                    |> Point3d.translateIn Direction3d.positiveZ (Length.meters 1)
+                                                )
+                                            )
+                                    }
+                            )
+                            control
+                        , case control of
+                            Fixed _ ->
+                                Geometry.Svg.circle2d
+                                    [ Svg.Attributes.stroke "rgb(200, 255, 200)"
+                                    , Svg.Attributes.strokeWidth "2"
+                                    , Svg.Attributes.fill "rgba(0, 0, 0, 0)"
+                                    , Html.Attributes.attribute "tabindex" "0"
+                                    , Svg.Events.on "pointerdown" (decodePointerDown (\_ _ -> ControlPointSelected index))
+                                    ]
+                                    (control
+                                        |> controlToFrame
+                                        |> Frame3d.originPoint
+                                        |> Point3d.Projection.toScreenSpace camera screenRectangle
+                                        |> Circle2d.withRadius (Pixels.float 6)
+                                    )
+
+                            Selected frame ->
+                                Svg.text ""
                         ]
                 )
-                controlPoints
+                model.controlPoints
                 |> Svg.g []
                 |> Geometry.Svg.relativeTo topLeftFrame
 
