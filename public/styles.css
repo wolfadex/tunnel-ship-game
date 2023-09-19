@@ -26,16 +26,16 @@ button[aria-pressed="true"] {
     left: 0;
 }
 
-.track-editor-control-point * {
+.track-editor-control-point {
     opacity: 0.25;
     cursor: pointer;
 }
 
 
-.track-editor-control-point:active circle,
-.track-editor-control-point:focus circle,
-.track-editor-control-point:focus-within circle,
-.track-editor-control-point:hover circle {
+.track-editor-control-point:active,
+.track-editor-control-point:focus,
+.track-editor-control-point:focus-within,
+.track-editor-control-point:hover {
     opacity: 0.75;
 }
 
