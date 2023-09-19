@@ -866,7 +866,7 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
                                 }
                         )
                     )
-                 , Svg.Events.on "pointerup" (decodePointerUp (ControlPointDeselected index))
+                 , Svg.Events.on "pointerup" (decodePointerUp (ControlPointArmDeselected index))
 
                  -- , Svg.Events.on "keydown" (decodeKeyDown index)
                  -- ]
@@ -889,14 +889,14 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
                 )
                 segment
 
-        viewWhenSelected : (Point3d Meters Coordinates.World -> Svg Msg) -> Control -> Svg Msg
+        viewWhenSelected : (Point3d Meters Coordinates.World -> ControlFrame -> Svg Msg) -> Control -> Svg Msg
         viewWhenSelected fn control =
             case control of
                 Fixed _ ->
                     Svg.text ""
 
                 Selected frame ->
-                    fn (Frame3d.originPoint frame)
+                    fn (Frame3d.originPoint frame) frame
 
         controlPointSvgs : Svg Msg
         controlPointSvgs =
@@ -906,14 +906,31 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
                         [ Svg.Attributes.class "track-editor-control-point"
                         ]
                         [ viewWhenSelected
-                            (\originPoint ->
+                            (\originPoint frame ->
+                                let
+                                    xDir =
+                                        case model.editMode of
+                                            ( _, Global ) ->
+                                                Direction3d.positiveX
+
+                                            ( _, Local ) ->
+                                                Frame3d.xDirection frame
+                                in
                                 viewControlPointMoveArm
                                     { color = "red"
                                     , index = index
-                                    , plane = Plane3d.through originPoint Direction3d.positiveZ
-                                    , dir = Direction3d.positiveX
+                                    , plane =
+                                        (case model.editMode of
+                                            ( _, Global ) ->
+                                                Direction3d.positiveZ
+
+                                            ( _, Local ) ->
+                                                Frame3d.zDirection frame
+                                        )
+                                            |> Plane3d.through originPoint
+                                    , dir = xDir
                                     , rotAxis =
-                                        Direction3d.positiveX
+                                        xDir
                                             |> Axis3d.through originPoint
                                     , segment =
                                         LineSegment2d.from
@@ -923,21 +940,38 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
                                             (Point3d.Projection.toScreenSpace camera
                                                 screenRectangle
                                                 (originPoint
-                                                    |> Point3d.translateIn Direction3d.positiveX (Length.meters 1)
+                                                    |> Point3d.translateIn xDir (Length.meters 1)
                                                 )
                                             )
                                     }
                             )
                             control
                         , viewWhenSelected
-                            (\originPoint ->
+                            (\originPoint frame ->
+                                let
+                                    yDir =
+                                        case model.editMode of
+                                            ( _, Global ) ->
+                                                Direction3d.positiveY
+
+                                            ( _, Local ) ->
+                                                Frame3d.yDirection frame
+                                in
                                 viewControlPointMoveArm
                                     { color = "green"
                                     , index = index
-                                    , plane = Plane3d.through originPoint Direction3d.positiveZ
-                                    , dir = Direction3d.positiveY
+                                    , plane =
+                                        (case model.editMode of
+                                            ( _, Global ) ->
+                                                Direction3d.positiveZ
+
+                                            ( _, Local ) ->
+                                                Frame3d.zDirection frame
+                                        )
+                                            |> Plane3d.through originPoint
+                                    , dir = yDir
                                     , rotAxis =
-                                        Direction3d.positiveY
+                                        yDir
                                             |> Axis3d.through originPoint
                                     , segment =
                                         LineSegment2d.from
@@ -947,21 +981,38 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
                                             (Point3d.Projection.toScreenSpace camera
                                                 screenRectangle
                                                 (originPoint
-                                                    |> Point3d.translateIn Direction3d.positiveY (Length.meters 1)
+                                                    |> Point3d.translateIn yDir (Length.meters 1)
                                                 )
                                             )
                                     }
                             )
                             control
                         , viewWhenSelected
-                            (\originPoint ->
+                            (\originPoint frame ->
+                                let
+                                    zDir =
+                                        case model.editMode of
+                                            ( _, Global ) ->
+                                                Direction3d.positiveZ
+
+                                            ( _, Local ) ->
+                                                Frame3d.zDirection frame
+                                in
                                 viewControlPointMoveArm
                                     { color = "blue"
                                     , index = index
-                                    , plane = Plane3d.through originPoint Direction3d.positiveX
-                                    , dir = Direction3d.positiveZ
+                                    , plane =
+                                        (case model.editMode of
+                                            ( _, Global ) ->
+                                                Direction3d.positiveX
+
+                                            ( _, Local ) ->
+                                                Frame3d.xDirection frame
+                                        )
+                                            |> Plane3d.through originPoint
+                                    , dir = zDir
                                     , rotAxis =
-                                        Direction3d.positiveZ
+                                        zDir
                                             |> Axis3d.through originPoint
                                     , segment =
                                         LineSegment2d.from
@@ -971,7 +1022,7 @@ viewControlPoints { viewSize, camera, movingControlPoint } (Potential model) =
                                             (Point3d.Projection.toScreenSpace camera
                                                 screenRectangle
                                                 (originPoint
-                                                    |> Point3d.translateIn Direction3d.positiveZ (Length.meters 1)
+                                                    |> Point3d.translateIn zDir (Length.meters 1)
                                                 )
                                             )
                                     }
