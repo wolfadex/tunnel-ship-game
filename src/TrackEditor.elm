@@ -1,6 +1,6 @@
 port module TrackEditor exposing
     ( Direction(..)
-    , EditMode
+    , EditType
     , EditorCamera
     , Effect(..)
     , Event(..)
@@ -8,6 +8,7 @@ port module TrackEditor exposing
     , Model
     , Modifiers
     , Msg(..)
+    , Scope
     , init
     , subscriptions
     , update
@@ -62,14 +63,18 @@ type alias Model =
     , camera : EditorCamera
     , debugFlags : DebugFlags
     , movingControlPoint : Maybe Track.Potential.ActiveControlPoint
-    , editMode : EditMode
+    , editMode : ( EditType, Scope )
     }
 
 
-type EditMode
-    = MoveGlobal
-    | MoveLocal
-    | RotateLocal
+type EditType
+    = Move
+    | Rotate
+
+
+type Scope
+    = Global
+    | Local
 
 
 type alias Modifiers =
@@ -124,8 +129,19 @@ init timeNow =
     , potentialTrack = potentialTrack
     , trackPreview =
         potentialTrack
-            |> Track.fromPotential
+            |> Track.Potential.toSegments
             |> Result.toMaybe
+            |> Maybe.andThen
+                (\segments ->
+                    case segments of
+                        [] ->
+                            Nothing
+
+                        first :: rest ->
+                            ( first, rest )
+                                |> Track.init (Shape.newRegular 5)
+                                |> Just
+                )
     , previewShipDistance = Length.meters 0
     , previewShipGeometry =
         Block3d.centeredOn Frame3d.atOrigin
@@ -135,7 +151,7 @@ init timeNow =
             )
     , debugFlags = debugFlags
     , movingControlPoint = Nothing
-    , editMode = MoveGlobal
+    , editMode = ( Move, Global )
     , lastTickTime = Time.millisToPosix (round timeNow)
     }
         |> Update.save
@@ -197,9 +213,10 @@ type Msg
     | PointerDown Track.ActiveControlPoint
     | PointerMove Int (Point2d Pixels Coordinates.Screen)
     | PointerUp Int
-    | TestTrackClicked
     | PreviewShipDistanceChanged String
-    | EditModeChangeClicked EditMode
+    | EditTypeChangeClicked EditType
+    | EditScopeChangeClicked Scope
+    | TrackPotentialMsg Track.Potential.Msg
 
 
 type Effect
@@ -227,15 +244,6 @@ update msg model =
             model
                 |> applyEvent event
                 |> tick (timeDelta model timestamp)
-
-        TestTrackClicked ->
-            case Track.fromPotential model.potentialTrack of
-                Err _ ->
-                    Debug.todo ""
-
-                Ok _ ->
-                    model
-                        |> Update.save
 
         -- |> Update.withEffect (TestTrack track)
         DebugTrackPathToggled visible ->
@@ -291,9 +299,27 @@ update msg model =
             { model | previewShipDistance = previewShipDistance }
                 |> Update.save
 
-        EditModeChangeClicked editMode ->
-            { model | editMode = editMode }
+        EditTypeChangeClicked editType ->
+            let
+                ( _, scope ) =
+                    model.editMode
+            in
+            { model | editMode = ( editType, scope ) }
                 |> Update.save
+
+        EditScopeChangeClicked scope ->
+            let
+                ( editType, _ ) =
+                    model.editMode
+            in
+            { model | editMode = ( editType, scope ) }
+                |> Update.save
+
+        TrackPotentialMsg msg_ ->
+            Track.Potential.update msg_ model.potentialTrack
+                |> Update.mapModel (\potentialTrack -> { model | potentialTrack = potentialTrack })
+                |> Update.mapMsg TrackPotentialMsg
+                |> Update.applyEffects (\_ update_ -> update_)
 
         PointerDown activeControlPoint ->
             { model
@@ -340,25 +366,29 @@ update msg model =
                             newPotentialTrack : Track.Potential.Potential
                             newPotentialTrack =
                                 case model.editMode of
-                                    MoveGlobal ->
-                                        Track.Potential.moveControlPoint
-                                            { debugFlags = model.debugFlags
-                                            , movingControlPoint = newMovingControlPoint
-                                            , camera = camera
+                                    ( Move, Global ) ->
+                                        Track.Potential.editControlPoint
+                                            { camera = camera
                                             , screenRectangle = screenRectangle
+                                            , point = point
+                                            , index = index
+                                            , debugFlags = model.debugFlags
                                             }
                                             model.potentialTrack
 
-                                    MoveLocal ->
+                                    ( Move, Local ) ->
                                         Debug.todo ""
 
-                                    RotateLocal ->
-                                        Track.Potential.rotateControlPoint
-                                            { debugFlags = model.debugFlags
-                                            , movingControlPoint = newMovingControlPoint
-                                            , previousControlPoint = movingControlPoint.point
-                                            , camera = camera
+                                    ( Rotate, Global ) ->
+                                        Debug.todo ""
+
+                                    ( Rotate, Local ) ->
+                                        Track.Potential.editControlPoint
+                                            { camera = camera
                                             , screenRectangle = screenRectangle
+                                            , point = point
+                                            , index = index
+                                            , debugFlags = model.debugFlags
                                             }
                                             model.potentialTrack
                         in
@@ -367,8 +397,19 @@ update msg model =
                             , potentialTrack = newPotentialTrack
                             , trackPreview =
                                 newPotentialTrack
-                                    |> Track.fromPotential
+                                    |> Track.Potential.toSegments
                                     |> Result.toMaybe
+                                    |> Maybe.andThen
+                                        (\segments ->
+                                            case segments of
+                                                [] ->
+                                                    Nothing
+
+                                                first :: rest ->
+                                                    ( first, rest )
+                                                        |> Track.init (Shape.newRegular 5)
+                                                        |> Just
+                                        )
                         }
                             |> Update.save
 
@@ -673,52 +714,59 @@ view model =
                     ]
                 , Html.div []
                     [ Html.button
-                        [ Html.Events.onClick (EditModeChangeClicked MoveGlobal)
+                        [ Html.Events.onClick (EditTypeChangeClicked Move)
                         , Html.Attributes.attribute "aria-pressed" <|
                             case model.editMode of
-                                MoveGlobal ->
+                                ( Move, _ ) ->
                                     "true"
 
-                                _ ->
+                                ( Rotate, _ ) ->
                                     "false"
                         ]
-                        [ Html.text "Move Global" ]
+                        [ Html.text "Move" ]
                     , Html.button
-                        [ Html.Events.onClick (EditModeChangeClicked MoveLocal)
+                        [ Html.Events.onClick (EditTypeChangeClicked Rotate)
                         , Html.Attributes.attribute "aria-pressed" <|
                             case model.editMode of
-                                MoveLocal ->
+                                ( Rotate, _ ) ->
                                     "true"
 
-                                _ ->
+                                ( Move, _ ) ->
                                     "false"
                         ]
-                        [ Html.text "Move Local" ]
+                        [ Html.text "Rotate" ]
                     , Html.button
-                        [ Html.Attributes.disabled True ]
-                        [ Html.text "Rotate Global" ]
-                    , Html.button
-                        [ Html.Events.onClick (EditModeChangeClicked RotateLocal)
-                        , Html.Attributes.attribute "aria-pressed" <|
+                        [ Html.Events.onClick
+                            (EditScopeChangeClicked <|
+                                case model.editMode of
+                                    ( _, Global ) ->
+                                        Local
+
+                                    ( _, Local ) ->
+                                        Global
+                            )
+                        ]
+                        [ Html.text <|
                             case model.editMode of
-                                RotateLocal ->
-                                    "true"
+                                ( _, Global ) ->
+                                    "Global"
 
-                                _ ->
-                                    "false"
+                                ( _, Local ) ->
+                                    "Local"
                         ]
-                        [ Html.text "Rotate Local" ]
                     ]
                 ]
             , Track.Potential.viewControlPoints
                 { viewSize = viewSize
                 , camera = camera
                 , movingControlPoint = model.movingControlPoint
-                , onPointerDown = PointerDown
-                , onPointerMove = PointerMove
-                , onPointerUp = PointerUp
+
+                -- , onPointerDown = PointerDown
+                -- , onPointerMove = PointerMove
+                -- , onPointerUp = PointerUp
                 }
                 model.potentialTrack
+                |> Html.map TrackPotentialMsg
             ]
         , viewTrackPreview viewSize model
 

@@ -1,13 +1,18 @@
 module Track.Potential exposing
     ( ActiveControlPoint
+    , Control
+    , Effect
     , Internal
     , LengthError(..)
+    , Msg
     , Potential(..)
+    , Segment
+    , editControlPoint
     , init
     , length
-    , moveControlPoint
     , newDebugFlags
-    , rotateControlPoint
+    , toSegments
+    , update
     , view
     , viewControlPoints
     )
@@ -45,6 +50,7 @@ import Shape exposing (Shape)
 import Svg exposing (Svg)
 import Svg.Attributes
 import Svg.Events
+import Update exposing (Update)
 import Util.Result
 import Vector3d
 import Visible exposing (Visible)
@@ -56,10 +62,37 @@ type Potential
 
 type alias Internal =
     { shape : Shape Coordinates.Flat
-    , controlPoints : List (Frame3d Meters Coordinates.World Coordinates.DefinesLocal)
+    , controlPoints : List Control
     , knots : List Float
     , geometry : Scene3d.Entity Coordinates.World
     }
+
+
+type alias ControlFrame =
+    Frame3d Meters Coordinates.World Coordinates.DefinesLocal
+
+
+type Control
+    = MovingGlobal
+        { pointerId : Json.Decode.Value
+        , index : Int
+        , point : Point2d Pixels Coordinates.Screen
+        , direction : Direction3d Coordinates.World
+        , plane : Plane3d Meters Coordinates.World
+        , editingFrame : ControlFrame
+        , originalFrame : ControlFrame
+        }
+    | RotatingLocal
+        { pointerId : Json.Decode.Value
+        , index : Int
+        , point : Point2d Pixels Coordinates.Screen
+        , direction : Direction3d Coordinates.World
+        , plane : Plane3d Meters Coordinates.World
+        , rotationAxis : Axis3d Meters Coordinates.World
+        , editingFrame : ControlFrame
+        , originalFrame : ControlFrame
+        }
+    | Fixed ControlFrame
 
 
 type alias ActiveControlPoint =
@@ -78,7 +111,7 @@ init shape debugFlags =
         knots =
             [ 0, 0, 1, 2, 3, 4, 5, 6, 7, 7 ]
 
-        controlPoints : List (Frame3d Meters Coordinates.World Coordinates.DefinesLocal)
+        controlPoints : List Control
         controlPoints =
             [ Frame3d.unsafe
                 { originPoint = Point3d.meters 0 0 0
@@ -135,6 +168,7 @@ init shape debugFlags =
                 , zDirection = Direction3d.positiveZ
                 }
             ]
+                |> List.map Fixed
     in
     Potential
         { shape = shape
@@ -144,7 +178,20 @@ init shape debugFlags =
         }
 
 
-createTrackGeometry : List Float -> Maybe DebugFlags -> Shape Coordinates.Flat -> List (Frame3d Meters Coordinates.World Coordinates.DefinesLocal) -> Scene3d.Entity Coordinates.World
+controlToFrame : Control -> ControlFrame
+controlToFrame control =
+    case control of
+        MovingGlobal { originalFrame } ->
+            originalFrame
+
+        RotatingLocal { originalFrame } ->
+            originalFrame
+
+        Fixed frame ->
+            frame
+
+
+createTrackGeometry : List Float -> Maybe DebugFlags -> Shape Coordinates.Flat -> List Control -> Scene3d.Entity Coordinates.World
 createTrackGeometry knots debugFlags initialShape controlPoints =
     let
         segmentsInt : Int
@@ -224,7 +271,7 @@ viewIfVisible visible entities =
             []
 
 
-createTrackUpGeometry : List Float -> List (Frame3d Meters Coordinates.World Coordinates.DefinesLocal) -> Int -> Float -> Scene3d.Entity Coordinates.World
+createTrackUpGeometry : List Float -> List Control -> Int -> Float -> Scene3d.Entity Coordinates.World
 createTrackUpGeometry knots controlPoints segmentsInt _ =
     List.range 0 segmentsInt
         |> List.map
@@ -250,7 +297,7 @@ createTrackUpGeometry knots controlPoints segmentsInt _ =
         |> Scene3d.mesh (Scene3d.Material.color Color.blue)
 
 
-createTrackRightGeometry : List Float -> List (Frame3d Meters Coordinates.World Coordinates.DefinesLocal) -> Int -> Float -> Scene3d.Entity Coordinates.World
+createTrackRightGeometry : List Float -> List Control -> Int -> Float -> Scene3d.Entity Coordinates.World
 createTrackRightGeometry knots controlPoints segmentsInt _ =
     List.range 0 segmentsInt
         |> List.map
@@ -276,7 +323,7 @@ createTrackRightGeometry knots controlPoints segmentsInt _ =
         |> Scene3d.mesh (Scene3d.Material.color Color.red)
 
 
-viewTunnelRing : List Float -> Shape Coordinates.Flat -> List (Frame3d Meters Coordinates.World Coordinates.DefinesLocal) -> Length -> Scene3d.Entity Coordinates.World
+viewTunnelRing : List Float -> Shape Coordinates.Flat -> List Control -> Length -> Scene3d.Entity Coordinates.World
 viewTunnelRing knots shape controlPoints dist =
     let
         sketchPlan =
@@ -296,19 +343,21 @@ viewTunnelRing knots shape controlPoints dist =
         |> Scene3d.mesh (Scene3d.Material.color Color.lightPurple)
 
 
-samplePotentialAtInternal : List Float -> List (Frame3d Meters Coordinates.World Coordinates.DefinesLocal) -> Length -> Frame3d Meters Coordinates.World Coordinates.DefinesLocal
+samplePotentialAtInternal : List Float -> List Control -> Length -> ControlFrame
 samplePotentialAtInternal knots controlPoints dist =
     let
         segmentsRes : Result (Point3d Meters Coordinates.World) (List (Segment Meters Coordinates.World))
         segmentsRes =
             controlPoints
                 |> List.map
-                    (\frame ->
-                        ( frame
+                    (\control ->
+                        ( control
+                            |> controlToFrame
                             |> Frame3d.originPoint
-                        , frame
+                        , control
+                            |> controlToFrame
                             |> Frame3d.originPoint
-                            |> Point3d.translateIn (Frame3d.xDirection frame) Length.millimeter
+                            |> Point3d.translateIn (Frame3d.xDirection (controlToFrame control)) Length.millimeter
                         )
                     )
                 |> List.unzip
@@ -340,6 +389,42 @@ samplePotentialAtInternal knots controlPoints dist =
 
         Ok (first :: rest) ->
             sampleAlong ( first, rest ) dist
+
+
+toSegments : Potential -> Result (Point3d Meters Coordinates.World) (List (Segment Meters Coordinates.World))
+toSegments (Potential potential) =
+    let
+        carlFn =
+            CubicSpline3d.bSplineSegments potential.knots
+                >> List.map CubicSpline3d.nondegenerate
+                >> Util.Result.combine
+    in
+    potential.controlPoints
+        |> List.map
+            (\control ->
+                ( control
+                    |> controlToFrame
+                    |> Frame3d.originPoint
+                , control
+                    |> controlToFrame
+                    |> Frame3d.originPoint
+                    |> Point3d.translateIn (Frame3d.xDirection (controlToFrame control)) Length.millimeter
+                )
+            )
+        |> List.unzip
+        |> (\( a, b ) ->
+                case carlFn a of
+                    Ok left ->
+                        case carlFn b of
+                            Ok right ->
+                                Ok (List.map2 Tuple.pair left right)
+
+                            Err err ->
+                                Err err
+
+                    Err err ->
+                        Err err
+           )
 
 
 type alias Segment units coordinates =
@@ -406,109 +491,107 @@ sampleAlong ( ( left, right ), rest ) dist =
                 sampleAlong ( first, last ) (dist |> Quantity.minus arcLengthLeft)
 
 
-moveControlPoint :
-    { debugFlags : DebugFlags
-    , movingControlPoint : ActiveControlPoint
-    , camera : Camera3d Meters Coordinates.World
+editControlPoint :
+    { camera : Camera3d Meters Coordinates.World
     , screenRectangle : Rectangle2d Pixels Coordinates.Screen
+    , point : Point2d Pixels Coordinates.Screen
+    , index : Int
+    , debugFlags : DebugFlags
     }
     -> Potential
     -> Potential
-moveControlPoint { debugFlags, movingControlPoint, camera, screenRectangle } (Potential track) =
+editControlPoint cfg (Potential potential) =
     let
-        newControlPoints : List (Frame3d Meters Coordinates.World Coordinates.DefinesLocal)
+        newControlPoints : List Control
         newControlPoints =
             List.indexedMap
-                (\i oldControlPoint ->
-                    if movingControlPoint.index == i then
-                        movingControlPoint.point
-                            |> Camera3d.ray camera screenRectangle
-                            |> Axis3d.intersectionWithPlane movingControlPoint.plane
-                            |> Maybe.andThen
-                                (\p2 ->
-                                    let
-                                        axis =
-                                            Axis3d.through (Frame3d.originPoint oldControlPoint) movingControlPoint.direction
+                (\i control ->
+                    if i == cfg.index then
+                        case control of
+                            Fixed _ ->
+                                control
 
-                                        oldCenter =
-                                            Frame3d.originPoint oldControlPoint
-                                    in
-                                    Point3d.projectOntoAxis axis p2
-                                        |> Direction3d.from oldCenter
-                                        |> Maybe.map
-                                            (\dir ->
-                                                Frame3d.translateIn
-                                                    dir
-                                                    (Point3d.distanceFrom oldCenter p2)
-                                                    oldControlPoint
-                                            )
-                                )
-                            |> Maybe.withDefault oldControlPoint
-
-                    else
-                        oldControlPoint
-                )
-                track.controlPoints
-    in
-    Potential
-        { track
-            | controlPoints = newControlPoints
-            , geometry = createTrackGeometry track.knots (Just debugFlags) track.shape newControlPoints
-        }
-
-
-rotateControlPoint :
-    { debugFlags : DebugFlags
-    , movingControlPoint : ActiveControlPoint
-    , previousControlPoint : Point2d Pixels Coordinates.Screen
-    , camera : Camera3d Meters Coordinates.World
-    , screenRectangle : Rectangle2d Pixels Coordinates.Screen
-    }
-    -> Potential
-    -> Potential
-rotateControlPoint { debugFlags, movingControlPoint, previousControlPoint, camera, screenRectangle } (Potential track) =
-    let
-        newControlPoints : List (Frame3d Meters Coordinates.World Coordinates.DefinesLocal)
-        newControlPoints =
-            List.indexedMap
-                (\i oldControlPoint ->
-                    if movingControlPoint.index == i then
-                        let
-                            newCP =
-                                movingControlPoint.point
-                                    |> Camera3d.ray camera screenRectangle
-                                    |> Axis3d.intersectionWithPlane movingControlPoint.plane
-
-                            oldCP =
-                                previousControlPoint
-                                    |> Camera3d.ray camera screenRectangle
-                                    |> Axis3d.intersectionWithPlane movingControlPoint.plane
-                        in
-                        Maybe.map2
-                            (\newP oldP ->
+                            MovingGlobal editingControl ->
                                 let
-                                    angle =
-                                        Point3d.signedDistanceAlong (Axis3d.moveTo oldP movingControlPoint.rotationAxis) newP
-                                            |> Length.inMeters
-                                            |> (*) 2
-                                            |> Debug.log "angle"
-                                            |> Angle.degrees
+                                    maybeIntersectionPoint =
+                                        editingControl.point
+                                            |> Camera3d.ray cfg.camera cfg.screenRectangle
+                                            |> Axis3d.intersectionWithPlane editingControl.plane
                                 in
-                                Frame3d.rotateAround movingControlPoint.rotationAxis angle oldControlPoint
-                            )
-                            newCP
-                            oldCP
-                            |> Maybe.withDefault oldControlPoint
+                                case maybeIntersectionPoint of
+                                    Nothing ->
+                                        control
+
+                                    Just intersectionPoint ->
+                                        let
+                                            axis =
+                                                Axis3d.through (Frame3d.originPoint editingControl.editingFrame) editingControl.direction
+
+                                            oldCenter =
+                                                Frame3d.originPoint editingControl.editingFrame
+
+                                            newEditingFrame =
+                                                Point3d.projectOntoAxis axis intersectionPoint
+                                                    |> Direction3d.from oldCenter
+                                                    |> Maybe.map
+                                                        (\dir ->
+                                                            control
+                                                                |> controlToFrame
+                                                                |> Frame3d.translateIn
+                                                                    dir
+                                                                    (Point3d.distanceFrom oldCenter intersectionPoint)
+                                                        )
+                                        in
+                                        case newEditingFrame of
+                                            Nothing ->
+                                                control
+
+                                            Just newFrame ->
+                                                MovingGlobal { editingControl | editingFrame = newFrame }
+
+                            RotatingLocal editingControl ->
+                                let
+                                    maybeIntersectionPoint =
+                                        cfg.point
+                                            |> Camera3d.ray cfg.camera cfg.screenRectangle
+                                            |> Axis3d.intersectionWithPlane editingControl.plane
+
+                                    -- oldCP =
+                                    --     previousControlPoint
+                                    --         |> Camera3d.ray camera screenRectangle
+                                    --         |> Axis3d.intersectionWithPlane movingControlPoint.plane
+                                in
+                                case maybeIntersectionPoint of
+                                    Nothing ->
+                                        control
+
+                                    Just intersectionPoint ->
+                                        let
+                                            angle =
+                                                Point3d.distanceFrom (Frame3d.originPoint editingControl.originalFrame) intersectionPoint
+                                                    |> Length.inMeters
+                                                    -- |> (*) 2
+                                                    -- |> Debug.log "angle"
+                                                    |> Angle.degrees
+                                        in
+                                        RotatingLocal
+                                            { editingControl
+                                                | editingFrame =
+                                                    Frame3d.rotateAround
+                                                        editingControl.rotationAxis
+                                                        angle
+                                                        editingControl.originalFrame
+                                            }
 
                     else
-                        oldControlPoint
+                        control
                 )
-                track.controlPoints
+                potential.controlPoints
     in
     Potential
-        { track
+        { potential
             | controlPoints = newControlPoints
-            , geometry = createTrackGeometry track.knots (Just debugFlags) track.shape newControlPoints
+            , geometry = createTrackGeometry potential.knots (Just cfg.debugFlags) potential.shape newControlPoints
         }
 
 
@@ -525,10 +608,10 @@ length (Potential potential) =
     lengthInternal potential
 
 
-lengthInternal : { a | controlPoints : List (Frame3d Meters Coordinates.World Coordinates.DefinesLocal), knots : List Float } -> Result LengthError Length
+lengthInternal : { a | controlPoints : List Control, knots : List Float } -> Result LengthError Length
 lengthInternal { controlPoints, knots } =
     controlPoints
-        |> List.map Frame3d.originPoint
+        |> List.map (controlToFrame >> Frame3d.originPoint)
         |> CubicSpline3d.bSplineSegments knots
         |> List.map CubicSpline3d.nondegenerate
         |> Util.Result.combine
@@ -543,17 +626,81 @@ lengthInternal { controlPoints, knots } =
             )
 
 
+type Msg
+    = ControlPointSelected ActiveControlPoint
+    | ControlPointDeselected Int
+    | PointerMoved Int (Point2d Pixels Coordinates.Screen)
+
+
+type alias Effect =
+    Never
+
+
+update : Msg -> Potential -> Update Potential Msg Effect
+update msg (Potential potential) =
+    case msg of
+        ControlPointSelected active ->
+            { potential
+                | controlPoints =
+                    potential.controlPoints
+                        |> List.indexedMap
+                            (\i control ->
+                                if i == active.index then
+                                    MovingGlobal
+                                        { direction = active.direction
+                                        , editingFrame = controlToFrame control
+                                        , index = active.index
+                                        , originalFrame = controlToFrame control
+                                        , plane = active.plane
+                                        , point = active.point
+                                        , pointerId = active.pointerId
+                                        }
+
+                                else
+                                    control
+                            )
+            }
+                |> Potential
+                |> Update.save
+
+        ControlPointDeselected index ->
+            { potential
+                | controlPoints =
+                    potential.controlPoints
+                        |> List.indexedMap
+                            (\i control ->
+                                if i == index then
+                                    case control of
+                                        Fixed _ ->
+                                            control
+
+                                        MovingGlobal editingControl ->
+                                            Fixed editingControl.editingFrame
+
+                                        RotatingLocal editingControl ->
+                                            Fixed editingControl.editingFrame
+
+                                else
+                                    control
+                            )
+            }
+                |> Potential
+                |> Update.save
+
+        PointerMoved index point ->
+            potential
+                |> Potential
+                |> Update.save
+
+
 viewControlPoints :
     { viewSize : { width : Float, height : Float }
     , camera : Camera3d Meters Coordinates.World
     , movingControlPoint : Maybe ActiveControlPoint
-    , onPointerDown : ActiveControlPoint -> msg
-    , onPointerUp : Int -> msg
-    , onPointerMove : Int -> Point2d Pixels Coordinates.Screen -> msg
     }
     -> Potential
-    -> Html msg
-viewControlPoints { viewSize, camera, movingControlPoint, onPointerDown, onPointerUp, onPointerMove } (Potential track) =
+    -> Html Msg
+viewControlPoints { viewSize, camera, movingControlPoint } (Potential track) =
     let
         -- Take the 3D model for the logo and rotate it by the current angle
         -- rotatedLogo =
@@ -579,47 +726,54 @@ viewControlPoints { viewSize, camera, movingControlPoint, onPointerDown, onPoint
         controlPoints =
             track.controlPoints
                 |> List.map
-                    (\point ->
+                    (\control ->
                         { center =
-                            point
+                            control
+                                |> controlToFrame
                                 |> Frame3d.originPoint
                                 |> Point3d.Projection.toScreenSpace camera screenRectangle
-                        , point = Frame3d.originPoint point
+                        , point = Frame3d.originPoint (controlToFrame control)
                         , xSegment =
                             LineSegment2d.from
-                                (point
+                                (control
+                                    |> controlToFrame
                                     |> Frame3d.originPoint
                                     |> Point3d.Projection.toScreenSpace camera screenRectangle
                                 )
                                 (Point3d.Projection.toScreenSpace camera
                                     screenRectangle
-                                    (point
+                                    (control
+                                        |> controlToFrame
                                         |> Frame3d.originPoint
                                         |> Point3d.translateIn Direction3d.positiveX (Length.meters 1)
                                     )
                                 )
                         , ySegment =
                             LineSegment2d.from
-                                (point
+                                (control
+                                    |> controlToFrame
                                     |> Frame3d.originPoint
                                     |> Point3d.Projection.toScreenSpace camera screenRectangle
                                 )
                                 (Point3d.Projection.toScreenSpace camera
                                     screenRectangle
-                                    (point
+                                    (control
+                                        |> controlToFrame
                                         |> Frame3d.originPoint
                                         |> Point3d.translateIn Direction3d.positiveY (Length.meters 1)
                                     )
                                 )
                         , zSegment =
                             LineSegment2d.from
-                                (point
+                                (control
+                                    |> controlToFrame
                                     |> Frame3d.originPoint
                                     |> Point3d.Projection.toScreenSpace camera screenRectangle
                                 )
                                 (Point3d.Projection.toScreenSpace camera
                                     screenRectangle
-                                    (point
+                                    (control
+                                        |> controlToFrame
                                         |> Frame3d.originPoint
                                         |> Point3d.translateIn Direction3d.positiveZ (Length.meters 1)
                                     )
@@ -634,7 +788,7 @@ viewControlPoints { viewSize, camera, movingControlPoint, onPointerDown, onPoint
             -> Direction3d Coordinates.World
             -> Axis3d Meters Coordinates.World
             -> LineSegment2d Pixels Coordinates.Screen
-            -> Svg msg
+            -> Svg Msg
         viewControlPointDirSegment color index plane dir rotAxis segment =
             Geometry.Svg.lineSegment2d
                 ([ Svg.Attributes.stroke color
@@ -643,8 +797,8 @@ viewControlPoints { viewSize, camera, movingControlPoint, onPointerDown, onPoint
 
                  -- TODO
                  -- ([ Svg.Attributes.pointerEvents "all"
-                 , Svg.Events.on "pointerdown" (decodePointerDown onPointerDown index plane dir rotAxis)
-                 , Svg.Events.on "pointerup" (decodePointerUp onPointerUp index)
+                 , Svg.Events.on "pointerdown" (decodePointerDown ControlPointSelected index plane dir rotAxis)
+                 , Svg.Events.on "pointerup" (decodePointerUp ControlPointDeselected index)
 
                  -- , Svg.Events.on "keydown" (decodeKeyDown index)
                  -- ]
@@ -655,7 +809,7 @@ viewControlPoints { viewSize, camera, movingControlPoint, onPointerDown, onPoint
                                 if details.index == index then
                                     [ Svg.Attributes.style "cursor: grab"
                                     , Html.Attributes.property "___capturePointer" details.pointerId
-                                    , Svg.Events.on "pointermove" (decodePointerMove onPointerMove index)
+                                    , Svg.Events.on "pointermove" (decodePointerMove PointerMoved index)
                                     ]
 
                                 else
@@ -667,7 +821,7 @@ viewControlPoints { viewSize, camera, movingControlPoint, onPointerDown, onPoint
                 )
                 segment
 
-        controlPointSvgs : Svg msg
+        controlPointSvgs : Svg Msg
         controlPointSvgs =
             List.indexedMap
                 (\index controlPoint ->
