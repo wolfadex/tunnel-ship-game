@@ -139,7 +139,7 @@ init timeNow =
             )
     , debugFlags = debugFlags
     , movingControlPoint = Nothing
-    , showPreview = False
+    , showPreview = True
     , lastTickTime = Time.millisToPosix (round timeNow)
     }
         |> Update.save
@@ -763,7 +763,6 @@ view model =
             , Track.Potential.viewControlPoints
                 { viewSize = viewSize
                 , camera = camera
-                , movingControlPoint = model.movingControlPoint
                 }
                 model.potentialTrack
                 |> Html.map TrackPotentialMsg
