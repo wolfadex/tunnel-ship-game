@@ -62,6 +62,7 @@ import Svg exposing (Svg)
 import Svg.Attributes
 import Svg.Events
 import Update exposing (Update)
+import Util.Debug
 import Util.Result
 import Vector3d
 import Viewpoint3d
@@ -78,7 +79,7 @@ type alias Internal =
     , knots : List Float
     , geometry : Scene3d.Entity Coordinates.World
     , editMode : ( EditType, Scope )
-    , listenForPointerMove : Maybe Json.Decode.Value
+    , listenForPointerMove : Maybe ( Json.Decode.Value, Direction3d Coordinates.World )
     }
 
 
@@ -527,6 +528,9 @@ editControlPoint :
     -> Potential
 editControlPoint cfg (Potential potential) =
     let
+        _ =
+            Debug.log "deets" cfg.movingPoint
+
         newControlPoints : List Control
         newControlPoints =
             List.map
@@ -648,7 +652,7 @@ lengthInternal { controlPoints, knots } =
 type Msg
     = ControlPointSelected Int Bool
     | ControlPointDeselected Int
-    | ControlPointArmSelected PointerId
+    | ControlPointArmSelected PointerId (Direction3d Coordinates.World)
     | ControlPointArmDeselected PointerId
     | PointerMoved ActiveControlPoint
 
@@ -705,17 +709,22 @@ update cfg msg (Potential potential) =
                 |> Potential
                 |> Update.save
 
-        ControlPointArmSelected pointerId ->
-            { potential | listenForPointerMove = Just pointerId }
+        ControlPointArmSelected pointerId dir ->
+            { potential | listenForPointerMove = Just ( pointerId, dir ) }
                 |> Potential
                 |> Update.save
 
         ControlPointArmDeselected pointerId ->
-            (if Just pointerId == potential.listenForPointerMove then
-                { potential | listenForPointerMove = Nothing }
+            (case potential.listenForPointerMove of
+                Just ( pid, _ ) ->
+                    if pointerId == pid then
+                        { potential | listenForPointerMove = Nothing }
 
-             else
-                potential
+                    else
+                        potential
+
+                Nothing ->
+                    potential
             )
                 |> Potential
                 |> Update.save
@@ -831,98 +840,130 @@ viewControlPoints { viewSize, camera } (Potential model) =
 
         viewControlPointMoveArm :
             { color : String
-            , index : Int
             , plane : Plane3d Meters Coordinates.World
             , dir : Direction3d Coordinates.World
             , origin3d : Point3d Meters Coordinates.World
             }
             -> Svg Msg
-        viewControlPointMoveArm { color, index, plane, dir, origin3d } =
-            Geometry.Svg.lineSegment2d
-                ([ Svg.Attributes.stroke color
-                 , Svg.Attributes.strokeWidth "4"
-                 , Svg.Attributes.class "track-editor-control-point-arm"
-                 , Svg.Events.on "pointerdown" (decodePointerDown (\pointerId _ _ -> ControlPointArmSelected pointerId))
-                 , Svg.Events.on "pointerup" (decodePointerUp ControlPointArmDeselected)
-                 ]
-                    ++ (case model.listenForPointerMove of
-                            Just pointerId ->
-                                [ Svg.Attributes.style "cursor: grab"
-                                , Html.Attributes.property "___capturePointer" pointerId
-                                , Svg.Events.on "pointermove"
-                                    (decodePointerMove
-                                        (\point ->
-                                            PointerMoved
-                                                { pointerId = pointerId
-                                                , point = point
-                                                , direction = dir
-                                                , plane = plane
-                                                }
-                                        )
+        viewControlPointMoveArm { color, plane, dir, origin3d } =
+            case model.listenForPointerMove of
+                Just ( pid, pDir ) ->
+                    if pDir == dir then
+                        Geometry.Svg.lineSegment2d
+                            [ Svg.Attributes.stroke color
+                            , Svg.Attributes.strokeWidth "4"
+                            , Svg.Attributes.class "track-editor-control-point-arm"
+                            , Svg.Events.on "pointerdown" (decodePointerDown (\pointerId _ _ -> ControlPointArmSelected pointerId dir))
+                            , Svg.Events.on "pointerup"
+                                (decodePointerUp ControlPointArmDeselected)
+                            , Svg.Attributes.style "cursor: grab"
+                            , Html.Attributes.property "___capturePointer" pid
+                            , Svg.Events.on "pointermove"
+                                (decodePointerMove
+                                    (\point ->
+                                        PointerMoved
+                                            { pointerId = pid
+                                            , point = point
+                                            , direction = dir
+                                            , plane = plane
+                                            }
                                     )
-                                ]
+                                )
+                            ]
+                            (LineSegment2d.from
+                                (origin3d
+                                    |> Point3d.Projection.toScreenSpace camera screenRectangle
+                                )
+                                (Point3d.Projection.toScreenSpace camera
+                                    screenRectangle
+                                    (origin3d
+                                        |> Point3d.translateIn dir (Length.meters 1)
+                                    )
+                                )
+                            )
 
-                            Nothing ->
-                                []
-                       )
-                )
-                (LineSegment2d.from
-                    (origin3d
-                        |> Point3d.Projection.toScreenSpace camera screenRectangle
-                    )
-                    (Point3d.Projection.toScreenSpace camera
-                        screenRectangle
-                        (origin3d
-                            |> Point3d.translateIn dir (Length.meters 1)
+                    else
+                        Svg.text ""
+
+                Nothing ->
+                    Geometry.Svg.lineSegment2d
+                        [ Svg.Attributes.stroke color
+                        , Svg.Attributes.strokeWidth "4"
+                        , Svg.Attributes.class "track-editor-control-point-arm"
+                        , Svg.Events.on "pointerdown" (decodePointerDown (\pointerId _ _ -> Util.Debug.logMap (\_ -> dir) "pointer down" ControlPointArmSelected pointerId dir))
+                        , Svg.Events.on "pointerup" (decodePointerUp (\p -> Util.Debug.logMap (\_ -> dir) "pointer up" ControlPointArmDeselected p))
+                        ]
+                        (LineSegment2d.from
+                            (origin3d
+                                |> Point3d.Projection.toScreenSpace camera screenRectangle
+                            )
+                            (Point3d.Projection.toScreenSpace camera
+                                screenRectangle
+                                (origin3d
+                                    |> Point3d.translateIn dir (Length.meters 1)
+                                )
+                            )
                         )
-                    )
-                )
 
         viewControlPointRotationPanel :
             { color : String
-            , index : Int
             , plane : Plane3d Meters Coordinates.World
             , dir : Direction3d Coordinates.World
             , origin3d : Point3d Meters Coordinates.World
             }
             -> Svg Msg
-        viewControlPointRotationPanel { color, index, plane, dir, origin3d } =
-            origin3d
-                |> Circle3d.withRadius (Length.meters 1) dir
-                |> Circle3d.toArc
-                |> Arc3d.segments 24
-                |> Polyline3d.segments
-                |> List.map
-                    (LineSegment3d.Projection.toScreenSpace camera screenRectangle
-                        >> Geometry.Svg.lineSegment2d
-                            ([ Svg.Attributes.stroke color
-                             , Svg.Attributes.fill color
-                             , Svg.Events.on "pointerdown" (decodePointerDown (\pointerId _ _ -> ControlPointArmSelected pointerId))
-                             , Svg.Events.on "pointerup" (decodePointerUp ControlPointArmDeselected)
-                             ]
-                                ++ (case model.listenForPointerMove of
-                                        Just pointerId ->
-                                            [ Svg.Attributes.style "cursor: grab"
-                                            , Html.Attributes.property "___capturePointer" pointerId
-                                            , Svg.Events.on "pointermove"
-                                                (decodePointerMove
-                                                    (\point ->
-                                                        PointerMoved
-                                                            { pointerId = pointerId
-                                                            , point = point
-                                                            , direction = dir
-                                                            , plane = plane
-                                                            }
-                                                    )
+        viewControlPointRotationPanel { color, plane, dir, origin3d } =
+            case model.listenForPointerMove of
+                Just ( pid, pDir ) ->
+                    if pDir == dir then
+                        origin3d
+                            |> Circle3d.withRadius (Length.meters 1) dir
+                            |> Circle3d.toArc
+                            |> Arc3d.segments 24
+                            |> Polyline3d.segments
+                            |> List.map
+                                (LineSegment3d.Projection.toScreenSpace camera screenRectangle
+                                    >> Geometry.Svg.lineSegment2d
+                                        [ Svg.Attributes.stroke color
+                                        , Svg.Attributes.fill color
+                                        , Svg.Events.on "pointerdown" (decodePointerDown (\pointerId _ _ -> ControlPointArmSelected pointerId dir))
+                                        , Svg.Events.on "pointerup" (decodePointerUp ControlPointArmDeselected)
+                                        , Svg.Attributes.style "cursor: grab"
+                                        , Html.Attributes.property "___capturePointer" pid
+                                        , Svg.Events.on "pointermove"
+                                            (decodePointerMove
+                                                (\point ->
+                                                    PointerMoved
+                                                        { pointerId = pid
+                                                        , point = point
+                                                        , direction = dir
+                                                        , plane = plane
+                                                        }
                                                 )
-                                            ]
+                                            )
+                                        ]
+                                )
+                            |> Svg.g [ Svg.Attributes.class "track-editor-control-point-disc" ]
 
-                                        Nothing ->
-                                            []
-                                   )
+                    else
+                        Svg.text ""
+
+                Nothing ->
+                    origin3d
+                        |> Circle3d.withRadius (Length.meters 1) dir
+                        |> Circle3d.toArc
+                        |> Arc3d.segments 24
+                        |> Polyline3d.segments
+                        |> List.map
+                            (LineSegment3d.Projection.toScreenSpace camera screenRectangle
+                                >> Geometry.Svg.lineSegment2d
+                                    [ Svg.Attributes.stroke color
+                                    , Svg.Attributes.fill color
+                                    , Svg.Events.on "pointerdown" (decodePointerDown (\pointerId _ _ -> ControlPointArmSelected pointerId dir))
+                                    , Svg.Events.on "pointerup" (decodePointerUp ControlPointArmDeselected)
+                                    ]
                             )
-                    )
-                |> Svg.g [ Svg.Attributes.class "track-editor-control-point-disc" ]
+                        |> Svg.g [ Svg.Attributes.class "track-editor-control-point-disc" ]
 
         viewWhenSelected : (Point3d Meters Coordinates.World -> ControlFrame -> Svg Msg) -> Control -> Svg Msg
         viewWhenSelected fn control =
@@ -933,8 +974,8 @@ viewControlPoints { viewSize, camera } (Potential model) =
                 Selected frame ->
                     fn (Frame3d.originPoint frame) frame
 
-        viewControlArms : Int -> Point3d Meters Coordinates.World -> ControlFrame -> Svg Msg
-        viewControlArms index originPoint frame =
+        viewControlArms : Point3d Meters Coordinates.World -> ControlFrame -> Svg Msg
+        viewControlArms originPoint frame =
             Svg.g []
                 [ let
                     xDir =
@@ -947,7 +988,6 @@ viewControlPoints { viewSize, camera } (Potential model) =
                   in
                   viewControlPointMoveArm
                     { color = "red"
-                    , index = index
                     , plane =
                         (case model.editMode of
                             ( _, Global ) ->
@@ -971,7 +1011,6 @@ viewControlPoints { viewSize, camera } (Potential model) =
                   in
                   viewControlPointMoveArm
                     { color = "green"
-                    , index = index
                     , plane =
                         (case model.editMode of
                             ( _, Global ) ->
@@ -995,7 +1034,6 @@ viewControlPoints { viewSize, camera } (Potential model) =
                   in
                   viewControlPointMoveArm
                     { color = "blue"
-                    , index = index
                     , plane =
                         (case model.editMode of
                             ( _, Global ) ->
@@ -1010,8 +1048,8 @@ viewControlPoints { viewSize, camera } (Potential model) =
                     }
                 ]
 
-        viewRotationPanels : Int -> Point3d Meters Coordinates.World -> ControlFrame -> Svg Msg
-        viewRotationPanels index originPoint frame =
+        viewRotationPanels : Point3d Meters Coordinates.World -> ControlFrame -> Svg Msg
+        viewRotationPanels originPoint frame =
             Svg.g []
                 [ let
                     xDir =
@@ -1024,7 +1062,6 @@ viewControlPoints { viewSize, camera } (Potential model) =
                   in
                   viewControlPointRotationPanel
                     { color = "red"
-                    , index = index
                     , plane =
                         (case model.editMode of
                             ( _, Global ) ->
@@ -1048,7 +1085,6 @@ viewControlPoints { viewSize, camera } (Potential model) =
                   in
                   viewControlPointRotationPanel
                     { color = "green"
-                    , index = index
                     , plane =
                         (case model.editMode of
                             ( _, Global ) ->
@@ -1072,7 +1108,6 @@ viewControlPoints { viewSize, camera } (Potential model) =
                   in
                   viewControlPointRotationPanel
                     { color = "blue"
-                    , index = index
                     , plane =
                         (case model.editMode of
                             ( _, Global ) ->
@@ -1178,14 +1213,12 @@ viewControlPoints { viewSize, camera } (Potential model) =
                                 Just selFrame ->
                                     (case model.editMode of
                                         ( Move, _ ) ->
-                                            viewControlArms -1
-                                                -- index
+                                            viewControlArms
                                                 (Frame3d.originPoint selFrame)
                                                 selFrame
 
                                         ( Rotate, _ ) ->
-                                            viewRotationPanels -1
-                                                -- index
+                                            viewRotationPanels
                                                 (Frame3d.originPoint selFrame)
                                                 selFrame
                                     )
@@ -1234,6 +1267,8 @@ viewControlPoints { viewSize, camera } (Potential model) =
         [ Html.Attributes.width (floor viewSize.width)
         , Html.Attributes.height (floor viewSize.height)
         , Svg.Attributes.class "track-editor-svg"
+
+        -- , Svg.Events.onClick DeselectControlPoint
         ]
         [ controlPointSvgs
         , segmentSvgs
