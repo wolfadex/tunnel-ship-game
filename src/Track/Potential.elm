@@ -79,7 +79,12 @@ type alias Internal =
     , knots : List Float
     , geometry : Scene3d.Entity Coordinates.World
     , editMode : ( EditType, Scope )
-    , listenForPointerMove : Maybe ( Json.Decode.Value, Direction3d Coordinates.World )
+    , listenForPointerMove :
+        Maybe
+            ( Json.Decode.Value
+            , Point2d Pixels Coordinates.Screen
+            , Direction3d Coordinates.World
+            )
     }
 
 
@@ -88,26 +93,7 @@ type alias ControlFrame =
 
 
 type Control
-    = Selected ControlFrame
-      -- | MovingGlobal
-      --     { pointerId : Json.Decode.Value
-      --     , index : Int
-      --     , point : Point2d Pixels Coordinates.Screen
-      --     , direction : Direction3d Coordinates.World
-      --     , plane : Plane3d Meters Coordinates.World
-      --     , editingFrame : ControlFrame
-      --     , originalFrame : ControlFrame
-      --     }
-      -- | RotatingLocal
-      --     { pointerId : Json.Decode.Value
-      --     , index : Int
-      --     , point : Point2d Pixels Coordinates.Screen
-      --     , direction : Direction3d Coordinates.World
-      --     , plane : Plane3d Meters Coordinates.World
-      --     , rotationAxis : Axis3d Meters Coordinates.World
-      --     , editingFrame : ControlFrame
-      --     , originalFrame : ControlFrame
-      --     }
+    = Selected { originalFrame : ControlFrame, newFrame : ControlFrame }
     | Fixed ControlFrame
 
 
@@ -202,20 +188,6 @@ init shape debugFlags =
         , editMode = ( Move, Global )
         , listenForPointerMove = Nothing
         }
-
-
-controlToFrame : Control -> ControlFrame
-controlToFrame control =
-    case control of
-        -- MovingGlobal { originalFrame } ->
-        --     originalFrame
-        -- RotatingLocal { originalFrame } ->
-        --     originalFrame
-        Selected frame ->
-            frame
-
-        Fixed frame ->
-            frame
 
 
 createTrackGeometry : List Float -> Maybe DebugFlags -> Shape Coordinates.Flat -> List Control -> Scene3d.Entity Coordinates.World
@@ -373,6 +345,15 @@ viewTunnelRing knots shape controlPoints dist =
 samplePotentialAtInternal : List Float -> List Control -> Length -> ControlFrame
 samplePotentialAtInternal knots controlPoints dist =
     let
+        controlToFrame : Control -> ControlFrame
+        controlToFrame control =
+            case control of
+                Selected { newFrame } ->
+                    newFrame
+
+                Fixed frame ->
+                    frame
+
         segmentsRes : Result (Point3d Meters Coordinates.World) (List (Segment Meters Coordinates.World))
         segmentsRes =
             controlPoints
@@ -425,6 +406,15 @@ toSegments (Potential potential) =
             CubicSpline3d.bSplineSegments potential.knots
                 >> List.map CubicSpline3d.nondegenerate
                 >> Util.Result.combine
+
+        controlToFrame : Control -> ControlFrame
+        controlToFrame control =
+            case control of
+                Selected { newFrame } ->
+                    newFrame
+
+                Fixed frame ->
+                    frame
     in
     potential.controlPoints
         |> List.map
@@ -528,9 +518,6 @@ editControlPoint :
     -> Potential
 editControlPoint cfg (Potential potential) =
     let
-        _ =
-            Debug.log "deets" cfg.movingPoint
-
         newControlPoints : List Control
         newControlPoints =
             List.map
@@ -539,7 +526,7 @@ editControlPoint cfg (Potential potential) =
                         Fixed _ ->
                             control
 
-                        Selected editingFrame ->
+                        Selected frames ->
                             let
                                 maybeIntersectionPoint =
                                     cfg.movingPoint.point
@@ -553,10 +540,10 @@ editControlPoint cfg (Potential potential) =
                                 Just intersectionPoint ->
                                     let
                                         axis =
-                                            Axis3d.through (Frame3d.originPoint editingFrame) cfg.movingPoint.direction
+                                            Axis3d.through (Frame3d.originPoint frames.originalFrame) cfg.movingPoint.direction
 
                                         oldCenter =
-                                            Frame3d.originPoint editingFrame
+                                            Frame3d.originPoint frames.originalFrame
 
                                         newEditingFrame =
                                             intersectionPoint
@@ -564,8 +551,7 @@ editControlPoint cfg (Potential potential) =
                                                 |> Direction3d.from oldCenter
                                                 |> Maybe.map
                                                     (\dir ->
-                                                        control
-                                                            |> controlToFrame
+                                                        frames.originalFrame
                                                             |> Frame3d.translateIn
                                                                 dir
                                                                 (Point3d.distanceFrom oldCenter intersectionPoint)
@@ -576,7 +562,7 @@ editControlPoint cfg (Potential potential) =
                                             control
 
                                         Just newFrame ->
-                                            Selected newFrame
+                                            Selected { frames | newFrame = newFrame }
                  -- RotatingLocal editingControl ->
                  --     let
                  --         maybeIntersectionPoint =
@@ -618,6 +604,143 @@ editControlPoint cfg (Potential potential) =
         }
 
 
+moveControlPoint :
+    { camera : Camera3d Meters Coordinates.World
+    , debugFlags : DebugFlags
+    , screenRectangle : Rectangle2d Pixels Coordinates.Screen
+    , startPoint : Point2d Pixels Coordinates.Screen
+    , movingPoint : ActiveControlPoint
+    }
+    -> Potential
+    -> Potential
+moveControlPoint cfg (Potential potential) =
+    let
+        newControlPoints : List Control
+        newControlPoints =
+            List.map
+                (\control ->
+                    case control of
+                        Fixed _ ->
+                            control
+
+                        Selected frames ->
+                            let
+                                maybeStartIntersectionPoint =
+                                    cfg.startPoint
+                                        |> Camera3d.ray cfg.camera cfg.screenRectangle
+                                        |> Axis3d.intersectionWithPlane cfg.movingPoint.plane
+
+                                maybeIntersectionPoint =
+                                    cfg.movingPoint.point
+                                        |> Camera3d.ray cfg.camera cfg.screenRectangle
+                                        |> Axis3d.intersectionWithPlane cfg.movingPoint.plane
+                            in
+                            Maybe.map2
+                                (\startIntersectionPoint intersectionPoint ->
+                                    let
+                                        axis =
+                                            Axis3d.through (Frame3d.originPoint frames.originalFrame) cfg.movingPoint.direction
+
+                                        oldCenter =
+                                            Frame3d.originPoint frames.originalFrame
+
+                                        newEditingFrame =
+                                            intersectionPoint
+                                                |> Point3d.projectOntoAxis axis
+                                                |> Direction3d.from oldCenter
+                                                |> Maybe.map
+                                                    (\dir ->
+                                                        frames.originalFrame
+                                                            |> Frame3d.translateIn
+                                                                dir
+                                                                (Point3d.distanceFrom startIntersectionPoint intersectionPoint)
+                                                    )
+                                    in
+                                    case newEditingFrame of
+                                        Nothing ->
+                                            control
+
+                                        Just newFrame ->
+                                            Selected { frames | newFrame = newFrame }
+                                )
+                                maybeStartIntersectionPoint
+                                maybeIntersectionPoint
+                                |> Maybe.withDefault control
+                )
+                potential.controlPoints
+    in
+    Potential
+        { potential
+            | controlPoints = newControlPoints
+            , geometry = createTrackGeometry potential.knots (Just cfg.debugFlags) potential.shape newControlPoints
+        }
+
+
+rotateControlPoint :
+    { camera : Camera3d Meters Coordinates.World
+    , debugFlags : DebugFlags
+    , screenRectangle : Rectangle2d Pixels Coordinates.Screen
+    , startPoint : Point2d Pixels Coordinates.Screen
+    , movingPoint : ActiveControlPoint
+    }
+    -> Potential
+    -> Potential
+rotateControlPoint cfg (Potential potential) =
+    let
+        newControlPoints : List Control
+        newControlPoints =
+            List.map
+                (\control ->
+                    case control of
+                        Fixed _ ->
+                            control
+
+                        Selected frames ->
+                            let
+                                maybeIntersectionPoint =
+                                    cfg.movingPoint.point
+                                        |> Camera3d.ray cfg.camera cfg.screenRectangle
+                                        |> Axis3d.intersectionWithPlane cfg.movingPoint.plane
+
+                                maybeStartIntersectionPoint =
+                                    cfg.startPoint
+                                        |> Camera3d.ray cfg.camera cfg.screenRectangle
+                                        |> Axis3d.intersectionWithPlane cfg.movingPoint.plane
+                            in
+                            Maybe.map2
+                                (\startIntersectionPoint intersectionPoint ->
+                                    let
+                                        angle =
+                                            Point3d.distanceFrom startIntersectionPoint intersectionPoint
+                                                |> Length.inMeters
+                                                |> (*) 4
+                                                |> Debug.log "angle"
+                                                |> Angle.degrees
+
+                                        newFrame =
+                                            Frame3d.rotateAround
+                                                (frames.originalFrame
+                                                    |> Frame3d.originPoint
+                                                    |> Axis3d.withDirection cfg.movingPoint.direction
+                                                )
+                                                angle
+                                                frames.originalFrame
+                                    in
+                                    Selected { frames | newFrame = newFrame }
+                                )
+                                maybeStartIntersectionPoint
+                                maybeIntersectionPoint
+                                |> Maybe.withDefault control
+                )
+                potential.controlPoints
+    in
+    Potential
+        { potential
+            | controlPoints = newControlPoints
+            , geometry = createTrackGeometry potential.knots (Just cfg.debugFlags) potential.shape newControlPoints
+        }
+
+
 newDebugFlags : DebugFlags -> Potential -> Potential
 newDebugFlags debugFlags (Potential track) =
     Potential
@@ -633,6 +756,16 @@ length (Potential potential) =
 
 lengthInternal : { a | controlPoints : List Control, knots : List Float } -> Result LengthError Length
 lengthInternal { controlPoints, knots } =
+    let
+        controlToFrame : Control -> ControlFrame
+        controlToFrame control =
+            case control of
+                Selected { newFrame } ->
+                    newFrame
+
+                Fixed frame ->
+                    frame
+    in
     controlPoints
         |> List.map (controlToFrame >> Frame3d.originPoint)
         |> CubicSpline3d.bSplineSegments knots
@@ -652,9 +785,10 @@ lengthInternal { controlPoints, knots } =
 type Msg
     = ControlPointSelected Int Bool
     | ControlPointDeselected Int
-    | ControlPointArmSelected PointerId (Direction3d Coordinates.World)
+    | ControlPointArmSelected PointerId (Point2d Pixels Coordinates.Screen) (Direction3d Coordinates.World)
     | ControlPointArmDeselected PointerId
-    | PointerMoved ActiveControlPoint
+    | ControlPointMoved (Point2d Pixels Coordinates.Screen) ActiveControlPoint
+    | ControlPointRotated (Point2d Pixels Coordinates.Screen) ActiveControlPoint
 
 
 type alias Effect =
@@ -676,13 +810,18 @@ update cfg msg (Potential potential) =
                                             control
 
                                         Fixed frame ->
-                                            Selected frame
+                                            Selected { originalFrame = frame, newFrame = frame }
 
                                 else if shiftKey then
                                     control
 
                                 else
-                                    Fixed (controlToFrame control)
+                                    case control of
+                                        Selected frames ->
+                                            Fixed frames.newFrame
+
+                                        Fixed frame ->
+                                            control
                             )
             }
                 |> Potential
@@ -699,8 +838,8 @@ update cfg msg (Potential potential) =
                                         Fixed _ ->
                                             control
 
-                                        Selected frame ->
-                                            Fixed frame
+                                        Selected { newFrame } ->
+                                            Fixed newFrame
 
                                 else
                                     control
@@ -709,16 +848,29 @@ update cfg msg (Potential potential) =
                 |> Potential
                 |> Update.save
 
-        ControlPointArmSelected pointerId dir ->
-            { potential | listenForPointerMove = Just ( pointerId, dir ) }
+        ControlPointArmSelected pointerId point dir ->
+            { potential | listenForPointerMove = Just ( pointerId, point, dir ) }
                 |> Potential
                 |> Update.save
 
         ControlPointArmDeselected pointerId ->
             (case potential.listenForPointerMove of
-                Just ( pid, _ ) ->
+                Just ( pid, _, _ ) ->
                     if pointerId == pid then
-                        { potential | listenForPointerMove = Nothing }
+                        { potential
+                            | listenForPointerMove = Nothing
+                            , controlPoints =
+                                potential.controlPoints
+                                    |> List.map
+                                        (\control ->
+                                            case control of
+                                                Fixed _ ->
+                                                    control
+
+                                                Selected { originalFrame, newFrame } ->
+                                                    Selected { originalFrame = newFrame, newFrame = newFrame }
+                                        )
+                        }
 
                     else
                         potential
@@ -729,7 +881,7 @@ update cfg msg (Potential potential) =
                 |> Potential
                 |> Update.save
 
-        PointerMoved details ->
+        ControlPointMoved startPoint details ->
             let
                 viewSize =
                     { width = 800
@@ -741,10 +893,33 @@ update cfg msg (Potential potential) =
                     Point2d.pixels viewSize.width 0
                         |> Rectangle2d.from (Point2d.pixels 0 viewSize.height)
             in
-            editControlPoint
+            moveControlPoint
                 { camera = cfg.camera
                 , debugFlags = cfg.debugFlags
                 , screenRectangle = screenRectangle
+                , startPoint = startPoint
+                , movingPoint = details
+                }
+                (Potential potential)
+                |> Update.save
+
+        ControlPointRotated startPoint details ->
+            let
+                viewSize =
+                    { width = 800
+                    , height = 600
+                    }
+
+                screenRectangle : Rectangle2d Pixels Coordinates.Screen
+                screenRectangle =
+                    Point2d.pixels viewSize.width 0
+                        |> Rectangle2d.from (Point2d.pixels 0 viewSize.height)
+            in
+            rotateControlPoint
+                { camera = cfg.camera
+                , debugFlags = cfg.debugFlags
+                , screenRectangle = screenRectangle
+                , startPoint = startPoint
                 , movingPoint = details
                 }
                 (Potential potential)
@@ -769,6 +944,15 @@ viewControlPoints { viewSize, camera } (Potential model) =
         screenRectangle =
             Point2d.pixels viewSize.width viewSize.height
                 |> Rectangle2d.from Point2d.origin
+
+        controlToFrame : Control -> ControlFrame
+        controlToFrame control =
+            case control of
+                Selected { newFrame } ->
+                    newFrame
+
+                Fixed frame ->
+                    frame
 
         -- Take all vertices of the logo shape, rotate them the same amount as
         -- the logo itself and then project them into 2D screen space
@@ -847,21 +1031,21 @@ viewControlPoints { viewSize, camera } (Potential model) =
             -> Svg Msg
         viewControlPointMoveArm { color, plane, dir, origin3d } =
             case model.listenForPointerMove of
-                Just ( pid, pDir ) ->
+                Just ( pid, startPoint, pDir ) ->
                     if pDir == dir then
                         Geometry.Svg.lineSegment2d
                             [ Svg.Attributes.stroke color
                             , Svg.Attributes.strokeWidth "4"
                             , Svg.Attributes.class "track-editor-control-point-arm"
-                            , Svg.Events.on "pointerdown" (decodePointerDown (\pointerId _ _ -> ControlPointArmSelected pointerId dir))
-                            , Svg.Events.on "pointerup"
-                                (decodePointerUp ControlPointArmDeselected)
+                            , Svg.Events.on "pointerdown" (decodePointerDown (\pointerId point _ -> ControlPointArmSelected pointerId point dir))
+                            , Svg.Events.on "pointerup" (decodePointerUp ControlPointArmDeselected)
                             , Svg.Attributes.style "cursor: grab"
                             , Html.Attributes.property "___capturePointer" pid
                             , Svg.Events.on "pointermove"
                                 (decodePointerMove
                                     (\point ->
-                                        PointerMoved
+                                        ControlPointMoved
+                                            startPoint
                                             { pointerId = pid
                                             , point = point
                                             , direction = dir
@@ -890,8 +1074,8 @@ viewControlPoints { viewSize, camera } (Potential model) =
                         [ Svg.Attributes.stroke color
                         , Svg.Attributes.strokeWidth "4"
                         , Svg.Attributes.class "track-editor-control-point-arm"
-                        , Svg.Events.on "pointerdown" (decodePointerDown (\pointerId _ _ -> Util.Debug.logMap (\_ -> dir) "pointer down" ControlPointArmSelected pointerId dir))
-                        , Svg.Events.on "pointerup" (decodePointerUp (\p -> Util.Debug.logMap (\_ -> dir) "pointer up" ControlPointArmDeselected p))
+                        , Svg.Events.on "pointerdown" (decodePointerDown (\pointerId point _ -> ControlPointArmSelected pointerId point dir))
+                        , Svg.Events.on "pointerup" (decodePointerUp ControlPointArmDeselected)
                         ]
                         (LineSegment2d.from
                             (origin3d
@@ -914,7 +1098,7 @@ viewControlPoints { viewSize, camera } (Potential model) =
             -> Svg Msg
         viewControlPointRotationPanel { color, plane, dir, origin3d } =
             case model.listenForPointerMove of
-                Just ( pid, pDir ) ->
+                Just ( pid, startPoint, pDir ) ->
                     if pDir == dir then
                         origin3d
                             |> Circle3d.withRadius (Length.meters 1) dir
@@ -926,14 +1110,15 @@ viewControlPoints { viewSize, camera } (Potential model) =
                                     >> Geometry.Svg.lineSegment2d
                                         [ Svg.Attributes.stroke color
                                         , Svg.Attributes.fill color
-                                        , Svg.Events.on "pointerdown" (decodePointerDown (\pointerId _ _ -> ControlPointArmSelected pointerId dir))
+                                        , Svg.Events.on "pointerdown" (decodePointerDown (\pointerId point _ -> ControlPointArmSelected pointerId point dir))
                                         , Svg.Events.on "pointerup" (decodePointerUp ControlPointArmDeselected)
                                         , Svg.Attributes.style "cursor: grab"
                                         , Html.Attributes.property "___capturePointer" pid
                                         , Svg.Events.on "pointermove"
                                             (decodePointerMove
                                                 (\point ->
-                                                    PointerMoved
+                                                    ControlPointRotated
+                                                        startPoint
                                                         { pointerId = pid
                                                         , point = point
                                                         , direction = dir
@@ -959,20 +1144,11 @@ viewControlPoints { viewSize, camera } (Potential model) =
                                 >> Geometry.Svg.lineSegment2d
                                     [ Svg.Attributes.stroke color
                                     , Svg.Attributes.fill color
-                                    , Svg.Events.on "pointerdown" (decodePointerDown (\pointerId _ _ -> ControlPointArmSelected pointerId dir))
+                                    , Svg.Events.on "pointerdown" (decodePointerDown (\pointerId point _ -> ControlPointArmSelected pointerId point dir))
                                     , Svg.Events.on "pointerup" (decodePointerUp ControlPointArmDeselected)
                                     ]
                             )
                         |> Svg.g [ Svg.Attributes.class "track-editor-control-point-disc" ]
-
-        viewWhenSelected : (Point3d Meters Coordinates.World -> ControlFrame -> Svg Msg) -> Control -> Svg Msg
-        viewWhenSelected fn control =
-            case control of
-                Fixed _ ->
-                    Svg.text ""
-
-                Selected frame ->
-                    fn (Frame3d.originPoint frame) frame
 
         viewControlArms : Point3d Meters Coordinates.World -> ControlFrame -> Svg Msg
         viewControlArms originPoint frame =
@@ -1152,24 +1328,24 @@ viewControlPoints { viewSize, camera } (Potential model) =
                             Fixed _ ->
                                 controlArmFrame
 
-                            Selected nextFrame ->
+                            Selected { newFrame } ->
                                 case controlArmFrame of
                                     Nothing ->
-                                        Just nextFrame
+                                        Just newFrame
 
                                     Just previousFrame ->
                                         Frame3d.unsafe
                                             { originPoint =
                                                 Point3d.midpoint
                                                     (Frame3d.originPoint previousFrame)
-                                                    (Frame3d.originPoint nextFrame)
+                                                    (Frame3d.originPoint newFrame)
                                             , xDirection =
                                                 Vector3d.plus
                                                     (previousFrame
                                                         |> Frame3d.xDirection
                                                         |> Direction3d.toVector
                                                     )
-                                                    (nextFrame
+                                                    (newFrame
                                                         |> Frame3d.xDirection
                                                         |> Direction3d.toVector
                                                     )
@@ -1181,7 +1357,7 @@ viewControlPoints { viewSize, camera } (Potential model) =
                                                         |> Frame3d.yDirection
                                                         |> Direction3d.toVector
                                                     )
-                                                    (nextFrame
+                                                    (newFrame
                                                         |> Frame3d.yDirection
                                                         |> Direction3d.toVector
                                                     )
@@ -1193,7 +1369,7 @@ viewControlPoints { viewSize, camera } (Potential model) =
                                                         |> Frame3d.zDirection
                                                         |> Direction3d.toVector
                                                     )
-                                                    (nextFrame
+                                                    (newFrame
                                                         |> Frame3d.zDirection
                                                         |> Direction3d.toVector
                                                     )
